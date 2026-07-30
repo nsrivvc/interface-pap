@@ -3,6 +3,7 @@ import { useAuth } from './auth-context';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import TableViewer from './pages/TableViewer';
 import TableView from './pages/TableView';
 
 function Protected({ children }) {
@@ -23,6 +24,14 @@ export default function App() {
         element={
           <Protected>
             <Dashboard />
+          </Protected>
+        }
+      />
+      <Route
+        path="/tables"
+        element={
+          <Protected>
+            <TableViewer />
           </Protected>
         }
       />

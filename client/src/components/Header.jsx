@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 
 export default function Header() {
@@ -9,8 +9,14 @@ export default function Header() {
         <span className="logo-mark">
           V<span>C</span>
         </span>
-        Value Creed
+        Pipeline Accelerator Program
       </Link>
+      <nav className="header-nav">
+        <NavLink to="/" end>
+          Contract Workflow Dashboard
+        </NavLink>
+        <NavLink to="/tables">Table Viewer</NavLink>
+      </nav>
       <div className="header-user">
         <span>
           Signed in as <strong>{user?.name}</strong>

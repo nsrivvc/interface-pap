@@ -109,6 +109,27 @@ button {
 .logo-mark span {
   color: var(--orange);
 }
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.header-nav a {
+  color: var(--slate);
+  text-decoration: none;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 6px 2px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.header-nav a:hover {
+  color: var(--navy);
+}
+.header-nav a.active {
+  color: var(--orange);
+  border-bottom-color: var(--orange);
+}
 .header-user {
   display: flex;
   align-items: center;
@@ -298,6 +319,447 @@ button {
 .badge.running { background: #fdf0e5; color: var(--orange); }
 .badge.scheduled { background: #e7ecf6; color: var(--navy); }
 .badge.manual { background: #eef1f6; color: var(--slate); }
+
+/* ---- Workflow setup (step chips) ---- */
+.wf-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+.wf-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 2px solid var(--border);
+  background: #fff;
+  color: var(--navy);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+.wf-chip:hover {
+  border-color: var(--orange);
+}
+.wf-chip:active {
+  transform: scale(0.97);
+}
+.wf-chip.selected {
+  border-color: var(--orange);
+  background: #fdf0e5;
+}
+.wf-chip-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  color: var(--slate);
+  font-size: 0.7rem;
+  margin-bottom: 2px;
+}
+.wf-chip.selected .wf-chip-check {
+  background: var(--orange);
+  color: #fff;
+}
+.wf-chip-desc {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--slate);
+}
+
+/* ---- Manual Workflow (per-stage pipeline triggers) ---- */
+.mt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+.mt-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 12px 8px;
+}
+.mt-card.disabled {
+  background: #f2f4f8;
+  box-shadow: none;
+}
+.mt-stage-head {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--navy);
+  padding: 6px 10px 8px;
+}
+.mt-card.disabled .mt-stage-head {
+  color: #a6adbd;
+}
+.mt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--navy);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.mt-item:hover:not(:disabled) {
+  background: #fdf0e5;
+}
+.mt-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.mt-item-icon {
+  color: var(--orange);
+  font-size: 0.7rem;
+  margin-top: 3px;
+}
+.mt-coming-soon {
+  font-size: 0.78rem;
+  color: #a6adbd;
+  font-style: italic;
+  padding: 2px 10px 8px;
+}
+
+/* ---- Retrieve Source sub-menu (source checklist) ---- */
+.wf-sources {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--orange);
+  border-radius: 10px;
+  background: #fbfcfe;
+  animation: complete-in 0.3s ease;
+}
+.wf-sources-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+}
+.wf-sources-head .muted {
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+.wf-source-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px 18px;
+}
+.wf-source-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.wf-source-item:hover {
+  background: #f0f3f9;
+}
+.wf-source-item input[type='checkbox'] {
+  margin-top: 3px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+.wf-sources-warn {
+  margin-top: 10px;
+  font-size: 0.78rem;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ---- Workflow trigger time ---- */
+.wf-schedule {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--navy);
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.wf-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.wf-schedule-row input[type='time'],
+.wf-schedule-row select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  background: #fff;
+  color: var(--navy);
+}
+.wf-schedule-row select {
+  max-width: 280px;
+}
+.wf-schedule-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: #e7ecf6;
+  color: var(--navy);
+  font-size: 0.8rem;
+  width: fit-content;
+}
+.wf-schedule-clock {
+  font-size: 0.85rem;
+}
+.wf-schedule-tz {
+  font-weight: 600;
+  color: var(--slate);
+}
+.wf-schedule-tz::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--slate);
+}
+.wf-schedule-next {
+  color: var(--orange);
+  font-weight: 600;
+}
+.wf-schedule-next::before {
+  content: '·';
+  margin-right: 8px;
+  color: var(--slate);
+}
+.wf-set-schedule {
+  display: inline-block;
+  margin-top: 8px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wf-set-schedule:hover {
+  text-decoration: underline;
+}
+.badge-clear {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.7rem;
+  margin-left: 6px;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.7;
+}
+.badge-clear:hover {
+  opacity: 1;
+}
+
+/* ---- Workflow run (animated step pills) ---- */
+.step-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.step-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #eef1f6;
+  color: var(--slate);
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+}
+.step-pill.pending {
+  opacity: 0.65;
+}
+.step-pill.running {
+  background: #fdf0e5;
+  color: var(--orange);
+  border-color: var(--orange);
+  animation: step-pulse 1.1s ease-in-out infinite;
+}
+.step-pill.done {
+  background: #e2f3ea;
+  color: var(--success);
+  border-color: #bfe3cf;
+}
+.step-pill.failed {
+  background: #fbe6e4;
+  color: var(--danger);
+  border-color: #eec6c2;
+}
+.step-pill .tick {
+  display: inline-block;
+  animation: tick-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(192, 90, 30, 0.35); }
+  50% { box-shadow: 0 0 0 7px rgba(192, 90, 30, 0); }
+}
+@keyframes tick-pop {
+  0% { transform: scale(0); }
+  70% { transform: scale(1.4); }
+  100% { transform: scale(1); }
+}
+.source-track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.source-track-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--slate);
+  margin-right: 4px;
+}
+.step-pill.source-pill {
+  padding: 3px 10px;
+  font-size: 0.7rem;
+  background: #fff;
+}
+.step-pill.source-pill.running {
+  background: #fdf0e5;
+}
+.step-pill.source-pill.done {
+  background: #e2f3ea;
+}
+.step-pill.source-pill.failed {
+  background: #fbe6e4;
+}
+
+.wf-complete {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #e2f3ea;
+  color: var(--success);
+  font-size: 0.85rem;
+  font-weight: 600;
+  animation: complete-in 0.45s ease;
+}
+.wf-complete-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+  font-size: 0.8rem;
+  animation: tick-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes complete-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---- Table Viewer stage tabs ---- */
+.stage-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0;
+}
+.stage-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 10px 16px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--slate);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+  margin-bottom: -2px;
+}
+.stage-tab:hover {
+  color: var(--navy);
+}
+.stage-tab.active {
+  color: var(--navy);
+  border-bottom-color: var(--orange);
+}
+.stage-tab-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--orange);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ---- Table view (AG Grid) ---- */
+.tableview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.tableview-head h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+.grid-search {
+  width: 280px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.88rem;
+}
+.grid-search:focus {
+  outline: 2px solid var(--orange);
+  border-color: transparent;
+}
 
 /* ---- Data tables ---- */
 .data-table-wrap {

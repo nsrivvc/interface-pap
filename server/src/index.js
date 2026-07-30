@@ -49,45 +49,90 @@ app.post('/api/auth/login', wrap(async (req, res) => {
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
 // ---------- Tables ----------
-const VIEWABLE_TABLES = {
-  source_data: 'Source Data (Raw JSON)',
-  stage1_validated: 'Stage 1 — Validated',
-  stage2_normalized: 'Stage 2 — Normalized',
-  stage3_enriched: 'Stage 3 — Enriched',
-  stage4_aggregated: 'Stage 4 — Aggregated',
-  stage5_published: 'Stage 5 — Published',
-  workflow_runs: 'Workflow Runs',
-};
+// Each pipeline stage owns a set of tables. `backing` is the physical
+// Postgres table the virtual table reads from until the real per-source
+// tables exist in Neon.
+const STAGE_TABLES = [
+  {
+    stage: 'Stage 1 — API to Raw',
+    tables: [
+      { name: 'raw_firm', label: 'Firm — Raw JSON', backing: 'source_data' },
+      { name: 'raw_interruptible', label: 'Interruptible — Raw JSON', backing: 'source_data' },
+      { name: 'raw_awards', label: 'Awards — Raw JSON', backing: 'source_data' },
+      { name: 'raw_index', label: 'Index of Customers — Raw JSON', backing: 'source_data' },
+    ],
+  },
+  {
+    stage: 'Stage 2 — JSON-Bronze',
+    tables: [
+      { name: 'bronze_firm', label: 'Firm — Bronze', backing: 'stage1_validated' },
+      { name: 'bronze_interruptible', label: 'Interruptible — Bronze', backing: 'stage1_validated' },
+      { name: 'bronze_awards', label: 'Awards — Bronze', backing: 'stage1_validated' },
+      { name: 'bronze_index', label: 'Index of Customers — Bronze', backing: 'stage1_validated' },
+    ],
+  },
+  {
+    stage: 'Stage 3 — Silver Staging',
+    tables: [
+      { name: 'silver_staging', label: 'Capacity — Silver Staging', backing: 'stage2_normalized' },
+    ],
+  },
+  {
+    stage: 'Stage 4 — Rec-Del Pairing',
+    tables: [
+      { name: 'rec_del_pairs', label: 'Rec-Del Pairs', backing: 'stage3_enriched' },
+    ],
+  },
+  {
+    stage: 'Stage 5 — Master Capacity',
+    tables: [
+      { name: 'master_capacity', label: 'Master Capacity', backing: 'stage4_aggregated' },
+    ],
+  },
+  {
+    stage: 'Operations',
+    tables: [
+      { name: 'workflow_runs', label: 'Workflow Runs', backing: 'workflow_runs' },
+    ],
+  },
+];
+
+const TABLE_INDEX = Object.fromEntries(
+  STAGE_TABLES.flatMap((s) => s.tables.map((t) => [t.name, t]))
+);
 
 app.get('/api/tables', requireAuth, wrap(async (req, res) => {
-  const tables = [];
-  for (const [name, label] of Object.entries(VIEWABLE_TABLES)) {
-    let count = 0;
+  const counts = {}; // backing table -> row count, queried once each
+  for (const backing of new Set(Object.values(TABLE_INDEX).map((t) => t.backing))) {
     try {
-      [{ count }] = await sql.query(`SELECT count(*)::int AS count FROM ${name}`);
+      const [{ count }] = await sql.query(`SELECT count(*)::int AS count FROM ${backing}`);
+      counts[backing] = count;
     } catch {
-      // No database (or table missing) — show the card with zero rows
+      counts[backing] = 0; // no database yet
     }
-    tables.push({ name, label, rowCount: count });
   }
-  res.json({ tables });
+  const stages = STAGE_TABLES.map((s) => ({
+    stage: s.stage,
+    tables: s.tables.map((t) => ({ name: t.name, label: t.label, rowCount: counts[t.backing] })),
+  }));
+  res.json({ stages });
 }));
 
 app.get('/api/tables/:name', requireAuth, wrap(async (req, res) => {
-  const { name } = req.params;
-  if (!VIEWABLE_TABLES[name]) throw new Error('Unknown table.');
+  const table = TABLE_INDEX[req.params.name];
+  if (!table) throw new Error('Unknown table.');
   let rows = [];
   try {
-    rows = await sql.query(`SELECT * FROM ${name} ORDER BY id DESC LIMIT 200`);
+    rows = await sql.query(`SELECT * FROM ${table.backing} ORDER BY id DESC LIMIT 200`);
   } catch {
     // No database — show an empty table
   }
-  res.json({ name, label: VIEWABLE_TABLES[name], rows });
+  res.json({ name: table.name, label: table.label, rows });
 }));
 
 // ---------- Pipeline ----------
 app.post('/api/pipeline/retrieve-source', requireAuth, wrap(async (req, res) => {
-  res.json(await retrieveSource());
+  res.json(await retrieveSource(req.body?.source, req.body?.batchId));
 }));
 
 app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
