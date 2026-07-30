@@ -1,0 +1,14 @@
+{
+  "name": "interface-pap",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Value Creed styled data pipeline interface (React + Express + Neon)",
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,yellow \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "db:init": "npm run db:init --prefix server",
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
