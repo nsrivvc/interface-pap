@@ -63,6 +63,18 @@ CREATE TABLE IF NOT EXISTS workflows (
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Records dropped or flagged by any stage (bad volume/price, parse errors, etc.)
+CREATE TABLE IF NOT EXISTS pipeline_exceptions (
+  id         SERIAL PRIMARY KEY,
+  batch_id   TEXT,
+  source     TEXT,
+  stage      TEXT,
+  severity   TEXT NOT NULL DEFAULT 'error', -- error | warning
+  message    TEXT NOT NULL,
+  record     JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS workflow_runs (
   id          SERIAL PRIMARY KEY,
   workflow_id INTEGER REFERENCES workflows(id),

@@ -9,7 +9,8 @@ const STAGE_ICONS = {
   'Stage 3 — Silver Staging': '≡',
   'Stage 4 — Rec-Del Pairing': '+',
   'Stage 5 — Master Capacity': 'Σ',
-  Operations: '⟳',
+  Logging: '⟳',
+  Exceptions: '⚠',
 };
 
 export default function TableViewer() {

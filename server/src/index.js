@@ -90,9 +90,15 @@ const STAGE_TABLES = [
     ],
   },
   {
-    stage: 'Operations',
+    stage: 'Logging',
     tables: [
-      { name: 'workflow_runs', label: 'Workflow Runs', backing: 'workflow_runs' },
+      { name: 'workflow_runs', label: 'Workflow Run Logs', backing: 'workflow_runs' },
+    ],
+  },
+  {
+    stage: 'Exceptions',
+    tables: [
+      { name: 'pipeline_exceptions', label: 'Pipeline Exceptions', backing: 'pipeline_exceptions' },
     ],
   },
 ];
