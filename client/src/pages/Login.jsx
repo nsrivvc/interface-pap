@@ -30,7 +30,7 @@ export default function Login() {
         <span className="logo-mark">
           V<span style={{ color: '#c05a1e' }}>C</span> Value Creed
         </span>
-        <h1>Commodity Trading &amp; Risk Management Solutions</h1>
+        <h1>Pipeline Capacity Accelerator Program</h1>
         <p>
           Sign in to access the data pipeline interface — retrieve source data, run
           staged transformations, and orchestrate scheduled workflows, all backed by
@@ -43,9 +43,9 @@ export default function Login() {
           <p className="muted">Sign in to your account</p>
           {error && <div className="auth-error">{error}</div>}
           <div className="field">
-            <label>Email</label>
+            <label>Email or username</label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

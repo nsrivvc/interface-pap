@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { neon } from '@neondatabase/serverless';
+import bcrypt from 'bcryptjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -24,4 +25,11 @@ for (const statement of statements) {
   await sql.query(statement);
 }
 
-console.log(`Applied ${statements.length} statements. Neon database is ready.`);
+// Seed the default admin account (login: admin / 12345)
+const adminHash = await bcrypt.hash('12345', 10);
+await sql`
+  INSERT INTO users (name, email, password_hash)
+  VALUES ('Admin', 'admin', ${adminHash})
+  ON CONFLICT (email) DO NOTHING`;
+
+console.log(`Applied ${statements.length} statements. Neon database is ready (admin account: admin / 12345).`);

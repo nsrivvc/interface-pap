@@ -1,9 +1,19 @@
 import 'dotenv/config';
 import { neon } from '@neondatabase/serverless';
 
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is not set. Copy server/.env.example to server/.env and paste your Neon connection string.');
-  process.exit(1);
+export const hasDb = Boolean(process.env.DATABASE_URL);
+
+if (!hasDb) {
+  console.warn(
+    'DATABASE_URL is not set — running in local mode (admin/12345 login, empty tables). ' +
+      'Copy server/.env.example to server/.env and paste your Neon connection string to enable the database.'
+  );
 }
 
-export const sql = neon(process.env.DATABASE_URL);
+function noDb() {
+  throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+}
+
+export const sql = hasDb
+  ? neon(process.env.DATABASE_URL)
+  : Object.assign(() => noDb(), { query: () => noDb() });
