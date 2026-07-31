@@ -1,49 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-
-// Stage 1 (API to Raw) is the source retrieval itself; Stages 2-5 are the
-// transformations below. A workflow's stages are always a contiguous prefix
-// of this list — you can't run Stage 3 without Stage 2. `apiStage` is the
-// pipeline stage number on the server.
-const STAGE_DEFS = [
-  { key: 2, apiStage: 1, label: 'Stage 2', desc: 'JSON-Bronze' },
-  { key: 3, apiStage: 2, label: 'Stage 3', desc: 'Silver Staging (Bronze-To-Silver)' },
-  { key: 4, apiStage: 3, label: 'Stage 4', desc: 'Rec-Del Pairing' },
-  { key: 5, apiStage: 4, label: 'Stage 5', desc: 'Master Capacity' },
-];
-
-// NGH API pipelines the workflow retrieves before its stages run
-const SOURCE_DEFS = [
-  { key: 'firm', label: 'Firm', desc: 'NGH-gTran-Firms-API-Pipeline' },
-  { key: 'interruptible', label: 'Interruptible', desc: 'NGH-gTran-Interruptibles-API-Pipeline' },
-  { key: 'awards', label: 'Awards', desc: 'NGH-gExchange-Awards-API-Pipeline' },
-  { key: 'index', label: 'Index of Customers', desc: 'NGH-IndexOfCustomers-API-Pipeline' },
-];
-const ALL_SOURCE_KEYS = SOURCE_DEFS.map((s) => s.key);
-const sourceLabel = (key) => SOURCE_DEFS.find((s) => s.key === key)?.label || key;
-
-const STORAGE_KEY = 'pap_workflows_v2';
-
-function loadWorkflows() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-    // Clamp older saves to the current stage blocks and source list
-    return stored.map((w) => {
-      const sources = (w.sources || []).filter((k) => ALL_SOURCE_KEYS.includes(k));
-      return {
-        ...w,
-        stageCount: Math.min(w.stageCount, STAGE_DEFS.length),
-        sources: sources.length ? sources : ALL_SOURCE_KEYS,
-      };
-    });
-  } catch {
-    return [];
-  }
-}
-
-function saveWorkflows(workflows) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workflows));
-}
+import {
+  STAGE_DEFS,
+  SOURCE_DEFS,
+  ALL_SOURCE_KEYS,
+  sourceLabel,
+  shortSourceLabel,
+  loadWorkflows,
+  saveWorkflows,
+} from '../workflow-defs';
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -188,6 +153,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
     if (run?.id === id) setRun(null);
   };
 
+  // Remember the last run on the workflow itself so the Table Viewer can
+  // show which batch each workflow's tables were last populated by.
+  const recordLastRun = (id, lastRun) => {
+    setWorkflows((ws) => {
+      const next = ws.map((w) => (w.id === id ? { ...w, lastRun } : w));
+      saveWorkflows(next);
+      return next;
+    });
+  };
+
   const runWorkflow = async (wf) => {
     setRun({
       id: wf.id,
@@ -215,6 +190,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
       } catch (err) {
         setSourceState(j, 'failed');
         setRun((r) => ({ ...r, error: `Retrieve ${sourceLabel(wf.sources[j])} failed: ${err.message}` }));
+        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed' });
         return;
       }
     }
@@ -229,10 +205,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
       } catch (err) {
         setStageState(i, 'failed');
         setRun((r) => ({ ...r, error: `${stage.label} failed: ${err.message}` }));
+        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed' });
         return;
       }
     }
     setRun((r) => ({ ...r, finished: true }));
+    recordLastRun(wf.id, { batchId, at: Date.now(), status: 'success' });
     onPipelineRan?.();
   };
 
@@ -330,15 +308,15 @@ export default function WorkflowPanel({ onPipelineRan }) {
             )}
           </div>
 
-          {/* Stage blocks */}
+          {/* Stage blocks — greyed out until the stage pipelines are available */}
           <div className="wf-chip-row" style={{ marginTop: 16 }}>
             {STAGE_DEFS.map((stage, i) => (
               <button
                 key={stage.key}
                 type="button"
                 className={`wf-chip ${i < stageCount ? 'selected' : ''}`}
-                onClick={() => toggleStage(i)}
-                title={stage.desc}
+                disabled
+                title={`${stage.desc} — coming soon`}
               >
                 <span className="wf-chip-check">{i < stageCount ? '✓' : '+'}</span>
                 {stage.label}
@@ -408,11 +386,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
               <div>
                 <h3>
                   {wf.name}{' '}
-                  <span className="badge manual">
-                    {wf.sources.length} source{wf.sources.length > 1 ? 's' : ''}
-                    {wf.stageCount > 0 &&
-                      ` · ${wf.stageCount} stage${wf.stageCount > 1 ? 's' : ''}`}
-                  </span>
+                  {wf.sources.map((key) => (
+                    <span key={key} className="badge manual" style={{ marginLeft: 4 }}>
+                      {shortSourceLabel(key)}
+                    </span>
+                  ))}
+                  {wf.stageCount > 0 && (
+                    <span className="badge manual" style={{ marginLeft: 4 }}>
+                      {wf.stageCount} stage{wf.stageCount > 1 ? 's' : ''}
+                    </span>
+                  )}
                   {wf.schedule && (
                     <span className="badge scheduled" style={{ marginLeft: 6 }}>
                       scheduled

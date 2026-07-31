@@ -65,28 +65,39 @@ const STAGE_TABLES = [
   {
     stage: 'Stage 2 — JSON-Bronze',
     tables: [
+      { name: 'raw_firm', label: 'Firm — Raw JSON', backing: 'source_data' },
       { name: 'bronze_firm', label: 'Firm — Bronze', backing: 'stage1_validated' },
+      { name: 'raw_interruptible', label: 'Interruptible — Raw JSON', backing: 'source_data' },
       { name: 'bronze_interruptible', label: 'Interruptible — Bronze', backing: 'stage1_validated' },
+      { name: 'raw_awards', label: 'Awards — Raw JSON', backing: 'source_data' },
       { name: 'bronze_awards', label: 'Awards — Bronze', backing: 'stage1_validated' },
+      { name: 'raw_index', label: 'Index of Customers — Raw JSON', backing: 'source_data' },
       { name: 'bronze_index', label: 'Index of Customers — Bronze', backing: 'stage1_validated' },
     ],
   },
   {
     stage: 'Stage 3 — Silver Staging',
     tables: [
-      { name: 'silver_staging', label: 'Capacity — Silver Staging', backing: 'stage2_normalized' },
+      { name: 'firm_locations_standardized', label: 'Firm Locations — Standardized', backing: 'stage2_normalized' },
+      { name: 'firm_core_standardized', label: 'Firm Core — Standardized', backing: 'stage2_normalized' },
+      { name: 'firm_rates_standardized', label: 'Firm Rates — Standardized', backing: 'stage2_normalized' },
     ],
   },
   {
     stage: 'Stage 4 — Rec-Del Pairing',
     tables: [
-      { name: 'rec_del_pairs', label: 'Rec-Del Pairs', backing: 'stage3_enriched' },
+      { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
     ],
   },
   {
     stage: 'Stage 5 — Master Capacity',
     tables: [
-      { name: 'master_capacity', label: 'Master Capacity', backing: 'stage4_aggregated' },
+      { name: 'firm_core_master_capacity', label: 'Firm Core — Master Capacity', backing: 'stage4_aggregated' },
+      { name: 'firm_locations_master_capacity', label: 'Firm Locations — Master Capacity', backing: 'stage4_aggregated' },
+      { name: 'firm_rates_master_capacity', label: 'Firm Rates — Master Capacity', backing: 'stage4_aggregated' },
+      { name: 'final_core_master_capacity', label: 'Final Core — Master Capacity', backing: 'final_core_master_capacity' },
+      { name: 'final_locations_master_capacity', label: 'Final Locations — Master Capacity', backing: 'stage4_aggregated' },
+      { name: 'final_rates_master_capacity', label: 'Final Rates — Master Capacity', backing: 'stage4_aggregated' },
     ],
   },
   {
