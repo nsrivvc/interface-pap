@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
-import { api } from '../api';
+import { api, apiDownload } from '../api';
 import Header from '../components/Header';
+
+const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'parquet'];
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -32,6 +34,20 @@ export default function TableView() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [quickFilter, setQuickFilter] = useState('');
+  const [downloading, setDownloading] = useState(null); // format while a download runs
+  const [downloadError, setDownloadError] = useState('');
+
+  const download = async (format) => {
+    setDownloading(format);
+    setDownloadError('');
+    try {
+      await apiDownload(`/api/tables/${name}/download?format=${format}`);
+    } catch (err) {
+      setDownloadError(err.message);
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   useEffect(() => {
     setData(null);
@@ -68,17 +84,41 @@ export default function TableView() {
         </Link>
         <div className="tableview-head">
           <h2>{data?.label || name}</h2>
-          {data?.rows?.length > 0 && (
-            <input
-              type="text"
-              className="grid-search"
-              placeholder="Search all columns…"
-              value={quickFilter}
-              onChange={(e) => setQuickFilter(e.target.value)}
-            />
-          )}
+          <div className="tableview-actions">
+            {data && (
+              <div className="dl-group">
+                <span className="dl-label">Download</span>
+                {DOWNLOAD_FORMATS.map((format) => (
+                  <button
+                    key={format}
+                    className="btn btn-outline dl-btn"
+                    disabled={downloading !== null}
+                    onClick={() => download(format)}
+                    title={
+                      format === 'parquet'
+                        ? 'Latest Parquet file exported by the pipeline'
+                        : `Download all rows as ${format.toUpperCase()}`
+                    }
+                  >
+                    {downloading === format ? <span className="spin">⟳</span> : '↓'}{' '}
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+            {data?.rows?.length > 0 && (
+              <input
+                type="text"
+                className="grid-search"
+                placeholder="Search all columns…"
+                value={quickFilter}
+                onChange={(e) => setQuickFilter(e.target.value)}
+              />
+            )}
+          </div>
         </div>
         {error && <div className="status-line err">{error}</div>}
+        {downloadError && <div className="status-line err">{downloadError}</div>}
         {!data && !error && <p>Loading…</p>}
         {data && data.rows.length === 0 && (
           <div className="card">

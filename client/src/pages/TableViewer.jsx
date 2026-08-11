@@ -82,18 +82,37 @@ const STAGE5_GROUPS = [
   { label: 'Final', accent: 'final', test: (n) => n.startsWith('final_') },
 ];
 
+// Mock NatGasHub API that Stage 1 retrieves from (json--bronze--postgres repo)
+const SOURCE_API_BASE = import.meta.env.VITE_SOURCE_API_BASE || 'http://localhost:8000';
+
 const STAGE1_GROUPS = [
+  {
+    label: 'Firm',
+    test: (n) => n === 'raw_firm',
+    source: { label: 'Firm Source', url: `${SOURCE_API_BASE}/api/firms` },
+  },
+  {
+    label: 'Interruptible',
+    test: (n) => n === 'raw_interruptible',
+    source: { label: 'Interruptible Source', url: `${SOURCE_API_BASE}/api/interruptibles` },
+  },
+  {
+    label: 'Awards',
+    test: (n) => n === 'raw_awards',
+    source: { label: 'Awards Source', url: `${SOURCE_API_BASE}/api/awards` },
+  },
+  {
+    label: 'IOC',
+    test: (n) => n === 'raw_index',
+    source: { label: 'IOC Source', url: `${SOURCE_API_BASE}/api/ioc` },
+  },
+];
+
+const STAGE2_GROUPS = [
   { label: 'Firm', test: (n) => n === 'raw_firm' },
   { label: 'Interruptible', test: (n) => n === 'raw_interruptible' },
   { label: 'Awards', test: (n) => n === 'raw_awards' },
   { label: 'IOC', test: (n) => n === 'raw_index' },
-];
-
-const STAGE2_GROUPS = [
-  { label: 'Firm', test: (n) => ['raw_firm', 'bronze_firm'].includes(n) },
-  { label: 'Interruptible', test: (n) => ['raw_interruptible', 'bronze_interruptible'].includes(n) },
-  { label: 'Awards', test: (n) => ['raw_awards', 'bronze_awards'].includes(n) },
-  { label: 'IOC', test: (n) => ['raw_index', 'bronze_index'].includes(n) },
 ];
 
 const STAGE3_GROUPS = [
@@ -114,7 +133,19 @@ function CategorySection({ title, groups, names, tableIndex, icon }) {
           if (!members.length) return null;
           return (
             <div key={g.label} className={`tv-group ${g.accent || ''}`}>
-              <div className="tv-group-label">{g.label}</div>
+              <div className="tv-group-label">
+                {g.label}
+                {g.source && (
+                  <a
+                    className="tv-group-source"
+                    href={g.source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {g.source.label} ↗
+                  </a>
+                )}
+              </div>
               <div className="grid grid-tables-sm">
                 {members.map((n) => (
                   <TableCard key={n} name={n} table={tableIndex[n]} icon={icon} />

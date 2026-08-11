@@ -896,6 +896,18 @@ button {
   letter-spacing: 0.08em;
   color: var(--navy);
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.tv-group-source {
+  color: var(--orange);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tv-group-source:hover {
+  text-decoration: underline;
 }
 .tv-group.final .tv-group-label {
   color: var(--orange);
@@ -949,6 +961,28 @@ button {
 .tableview-head h2 {
   font-size: 1.3rem;
   font-weight: 700;
+}
+.tableview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+}
+.dl-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dl-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--slate);
+}
+.dl-btn {
+  padding: 8px 12px;
+  font-size: 0.78rem;
 }
 .grid-search {
   width: 280px;

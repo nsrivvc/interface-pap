@@ -6,6 +6,7 @@ import { sql } from './db.js';
 import { signToken, requireAuth } from './auth.js';
 import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
+import { registerDownloadRoute } from './downloads.js';
 
 const app = express();
 app.use(cors());
@@ -56,23 +57,19 @@ const STAGE_TABLES = [
   {
     stage: 'Stage 1 — API to Raw',
     tables: [
-      { name: 'raw_firm', label: 'Firm — Raw JSON', backing: 'source_data' },
-      { name: 'raw_interruptible', label: 'Interruptible — Raw JSON', backing: 'source_data' },
-      { name: 'raw_awards', label: 'Awards — Raw JSON', backing: 'source_data' },
-      { name: 'raw_index', label: 'Index of Customers — Raw JSON', backing: 'source_data' },
+      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'source_data' },
+      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'source_data' },
+      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'source_data' },
+      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'source_data' },
     ],
   },
   {
     stage: 'Stage 2 — JSON-Bronze',
     tables: [
-      { name: 'raw_firm', label: 'Firm — Raw JSON', backing: 'source_data' },
-      { name: 'bronze_firm', label: 'Firm — Bronze', backing: 'stage1_validated' },
-      { name: 'raw_interruptible', label: 'Interruptible — Raw JSON', backing: 'source_data' },
-      { name: 'bronze_interruptible', label: 'Interruptible — Bronze', backing: 'stage1_validated' },
-      { name: 'raw_awards', label: 'Awards — Raw JSON', backing: 'source_data' },
-      { name: 'bronze_awards', label: 'Awards — Bronze', backing: 'stage1_validated' },
-      { name: 'raw_index', label: 'Index of Customers — Raw JSON', backing: 'source_data' },
-      { name: 'bronze_index', label: 'Index of Customers — Bronze', backing: 'stage1_validated' },
+      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'source_data' },
+      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'source_data' },
+      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'source_data' },
+      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'source_data' },
     ],
   },
   {
@@ -155,6 +152,8 @@ app.get('/api/tables', requireAuth, wrap(async (req, res) => {
   }));
   res.json({ stages });
 }));
+
+registerDownloadRoute(app, TABLE_INDEX);
 
 app.get('/api/tables/:name', requireAuth, wrap(async (req, res) => {
   const table = TABLE_INDEX[req.params.name];
