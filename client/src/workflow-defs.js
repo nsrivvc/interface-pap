@@ -51,23 +51,51 @@ export function saveWorkflows(workflows) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(workflows));
 }
 
-// Table Viewer table names for each part of a workflow. Stage 1 and Stage 2
-// have one table per retrieved source; Stages 3-5 each own a single table.
+// Stage 3 standardized tables per retrieved source — each source has
+// Locations, Core and Rates tables.
+export const STAGE3_SOURCE_TABLES = {
+  firm: ['firm_locations_standardized', 'firm_core_standardized', 'firm_rates_standardized'],
+  interruptible: [
+    'interruptible_locations_standardized',
+    'interruptible_core_standardized',
+    'interruptible_rates_standardized',
+  ],
+  awards: ['awards_locations_standardized', 'awards_core_standardized', 'awards_rates_standardized'],
+  index: ['index_locations_standardized', 'index_core_standardized', 'index_rates_standardized'],
+};
+
+// Stage 4 rec-del paired tables per retrieved source
+export const STAGE4_SOURCE_TABLES = {
+  firm: ['firm_locations_standardized_transformed'],
+  interruptible: ['interruptible_standardized_transformed'],
+  awards: ['awards_standardized_transformed'],
+  index: ['index_standardized_transformed'],
+};
+
+// Stage 5 master capacity tables per retrieved source, plus the Final
+// tables every workflow that reaches Stage 5 gets.
+export const STAGE5_SOURCE_TABLES = {
+  firm: ['firm_core_master_capacity', 'firm_locations_master_capacity', 'firm_rates_master_capacity'],
+  interruptible: [
+    'interruptible_core_master_capacity',
+    'interruptible_locations_master_capacity',
+    'interruptible_rates_master_capacity',
+  ],
+  awards: ['awards_core_master_capacity', 'awards_locations_master_capacity', 'awards_rates_master_capacity'],
+  index: ['index_core_master_capacity', 'index_locations_master_capacity', 'index_rates_master_capacity'],
+};
+const STAGE5_FINAL_TABLES = [
+  'final_core_master_capacity',
+  'final_locations_master_capacity',
+  'final_rates_master_capacity',
+];
+
+// Table Viewer table names for each part of a workflow. Stages 1-5
+// have tables per retrieved source; Stage 5 adds the Final tables.
 const STAGE_TABLES = {
-  3: [
-    'firm_locations_standardized',
-    'firm_core_standardized',
-    'firm_rates_standardized',
-  ],
-  4: ['firm_locations_standardized_transformed'],
-  5: [
-    'firm_core_master_capacity',
-    'firm_locations_master_capacity',
-    'firm_rates_master_capacity',
-    'final_core_master_capacity',
-    'final_locations_master_capacity',
-    'final_rates_master_capacity',
-  ],
+  3: ALL_SOURCE_KEYS.flatMap((k) => STAGE3_SOURCE_TABLES[k]),
+  4: ALL_SOURCE_KEYS.flatMap((k) => STAGE4_SOURCE_TABLES[k]),
+  5: [...ALL_SOURCE_KEYS.flatMap((k) => STAGE5_SOURCE_TABLES[k]), ...STAGE5_FINAL_TABLES],
 };
 
 const STAGE_ICONS = { 1: '{ }', 2: '✓', 3: '≡', 4: '+', 5: 'Σ' };
@@ -93,7 +121,16 @@ export function workflowStageSections(wf) {
       tables:
         stage.key === 2
           ? wf.sources.flatMap((k) => [`raw_${k}`, `bronze_${k}`])
-          : STAGE_TABLES[stage.key],
+          : stage.key === 3
+            ? wf.sources.flatMap((k) => STAGE3_SOURCE_TABLES[k])
+            : stage.key === 4
+              ? wf.sources.flatMap((k) => STAGE4_SOURCE_TABLES[k])
+              : stage.key === 5
+                ? [
+                    ...wf.sources.flatMap((k) => STAGE5_SOURCE_TABLES[k]),
+                    ...STAGE5_FINAL_TABLES,
+                  ]
+                : STAGE_TABLES[stage.key],
     });
   }
   return sections;

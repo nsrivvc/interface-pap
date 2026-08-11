@@ -29,6 +29,16 @@ const SAMPLE_WORKFLOW = {
   sample: true,
 };
 
+// Readable stand-in for a table whose label hasn't arrived from the API yet,
+// e.g. "index_locations_standardized" -> "IOC Locations Standardized".
+function fallbackLabel(name) {
+  return name
+    .replace(/^index(_|$)/, 'ioc$1')
+    .split('_')
+    .map((w) => (w === 'ioc' ? 'IOC' : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
 function TableCard({ table, name, icon }) {
   // Render even before /api/tables answers (or if it failed) so cards never
   // vanish — the row count fills in once the data arrives.
@@ -39,7 +49,7 @@ function TableCard({ table, name, icon }) {
       <div className="card table-card table-card-sm">
         <div className="icon-circle icon-circle-sm">{icon}</div>
         <div className="table-card-sm-body">
-          <h3>{table?.label || target}</h3>
+          <h3>{table?.label || fallbackLabel(target)}</h3>
           <p className="muted">{table ? `${table.rowCount} rows` : '…'}</p>
         </div>
         <span className="table-card-sm-view">View →</span>
@@ -66,6 +76,9 @@ function StageSection({ title, count, grouped, children }) {
 // `accent` picks the box color (default navy left border, 'final' = orange).
 const STAGE5_GROUPS = [
   { label: 'Firm', accent: 'firm', test: (n) => n.startsWith('firm_') },
+  { label: 'Interruptible', test: (n) => n.startsWith('interruptible_') },
+  { label: 'Awards', test: (n) => n.startsWith('awards_') },
+  { label: 'IOC', test: (n) => n.startsWith('index_') },
   { label: 'Final', accent: 'final', test: (n) => n.startsWith('final_') },
 ];
 
@@ -82,6 +95,15 @@ const STAGE2_GROUPS = [
   { label: 'Awards', test: (n) => ['raw_awards', 'bronze_awards'].includes(n) },
   { label: 'IOC', test: (n) => ['raw_index', 'bronze_index'].includes(n) },
 ];
+
+const STAGE3_GROUPS = [
+  { label: 'Firm', test: (n) => n.startsWith('firm_') },
+  { label: 'Interruptible', test: (n) => n.startsWith('interruptible_') },
+  { label: 'Awards', test: (n) => n.startsWith('awards_') },
+  { label: 'IOC', test: (n) => n.startsWith('index_') },
+];
+
+const STAGE4_GROUPS = STAGE3_GROUPS;
 
 function CategorySection({ title, groups, names, tableIndex, icon }) {
   return (
@@ -107,10 +129,18 @@ function CategorySection({ title, groups, names, tableIndex, icon }) {
 }
 
 // Category groups by stage key (workflow view) and stage name (All Tables view)
-const GROUPS_BY_KEY = { 1: STAGE1_GROUPS, 2: STAGE2_GROUPS, 5: STAGE5_GROUPS };
+const GROUPS_BY_KEY = {
+  1: STAGE1_GROUPS,
+  2: STAGE2_GROUPS,
+  3: STAGE3_GROUPS,
+  4: STAGE4_GROUPS,
+  5: STAGE5_GROUPS,
+};
 const GROUPS_BY_STAGE = {
   'Stage 1 — API to Raw': STAGE1_GROUPS,
   'Stage 2 — JSON-Bronze': STAGE2_GROUPS,
+  'Stage 3 — Silver Staging': STAGE3_GROUPS,
+  'Stage 4 — Rec-Del Pairing': STAGE4_GROUPS,
   'Stage 5 — Master Capacity': STAGE5_GROUPS,
 };
 
