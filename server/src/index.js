@@ -84,9 +84,6 @@ const STAGE_TABLES = [
       { name: 'awards_locations_standardized', label: 'Awards Locations — Standardized', backing: 'stage2_normalized' },
       { name: 'awards_core_standardized', label: 'Awards Core — Standardized', backing: 'stage2_normalized' },
       { name: 'awards_rates_standardized', label: 'Awards Rates — Standardized', backing: 'stage2_normalized' },
-      { name: 'index_locations_standardized', label: 'IOC Locations — Standardized', backing: 'stage2_normalized' },
-      { name: 'index_core_standardized', label: 'IOC Core — Standardized', backing: 'stage2_normalized' },
-      { name: 'index_rates_standardized', label: 'IOC Rates — Standardized', backing: 'stage2_normalized' },
     ],
   },
   {
@@ -95,7 +92,6 @@ const STAGE_TABLES = [
       { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
       { name: 'interruptible_standardized_transformed', label: 'Interruptible — Standardized (Transformed)', backing: 'stage3_enriched' },
       { name: 'awards_standardized_transformed', label: 'Awards — Standardized (Transformed)', backing: 'stage3_enriched' },
-      { name: 'index_standardized_transformed', label: 'Index of Customers — Standardized (Transformed)', backing: 'stage3_enriched' },
     ],
   },
   {
@@ -110,9 +106,6 @@ const STAGE_TABLES = [
       { name: 'awards_core_master_capacity', label: 'Awards Core — Master Capacity', backing: 'stage4_aggregated' },
       { name: 'awards_locations_master_capacity', label: 'Awards Locations — Master Capacity', backing: 'stage4_aggregated' },
       { name: 'awards_rates_master_capacity', label: 'Awards Rates — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'index_core_master_capacity', label: 'IOC Core — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'index_locations_master_capacity', label: 'IOC Locations — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'index_rates_master_capacity', label: 'IOC Rates — Master Capacity', backing: 'stage4_aggregated' },
       { name: 'final_core_master_capacity', label: 'Final Core — Master Capacity', backing: 'final_core_master_capacity' },
       { name: 'final_locations_master_capacity', label: 'Final Locations — Master Capacity', backing: 'stage4_aggregated' },
       { name: 'final_rates_master_capacity', label: 'Final Rates — Master Capacity', backing: 'stage4_aggregated' },

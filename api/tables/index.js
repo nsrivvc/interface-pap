@@ -33,9 +33,6 @@ export const STAGE_TABLES = [
       { name: 'awards_locations_standardized', label: 'Awards Locations — Standardized' },
       { name: 'awards_core_standardized', label: 'Awards Core — Standardized' },
       { name: 'awards_rates_standardized', label: 'Awards Rates — Standardized' },
-      { name: 'index_locations_standardized', label: 'IOC Locations — Standardized' },
-      { name: 'index_core_standardized', label: 'IOC Core — Standardized' },
-      { name: 'index_rates_standardized', label: 'IOC Rates — Standardized' },
     ],
   },
   {
@@ -44,7 +41,6 @@ export const STAGE_TABLES = [
       { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)' },
       { name: 'interruptible_standardized_transformed', label: 'Interruptible — Standardized (Transformed)' },
       { name: 'awards_standardized_transformed', label: 'Awards — Standardized (Transformed)' },
-      { name: 'index_standardized_transformed', label: 'Index of Customers — Standardized (Transformed)' },
     ],
   },
   {
@@ -59,9 +55,6 @@ export const STAGE_TABLES = [
       { name: 'awards_core_master_capacity', label: 'Awards Core — Master Capacity' },
       { name: 'awards_locations_master_capacity', label: 'Awards Locations — Master Capacity' },
       { name: 'awards_rates_master_capacity', label: 'Awards Rates — Master Capacity' },
-      { name: 'index_core_master_capacity', label: 'IOC Core — Master Capacity' },
-      { name: 'index_locations_master_capacity', label: 'IOC Locations — Master Capacity' },
-      { name: 'index_rates_master_capacity', label: 'IOC Rates — Master Capacity' },
       { name: 'final_core_master_capacity', label: 'Final Core — Master Capacity' },
       { name: 'final_locations_master_capacity', label: 'Final Locations — Master Capacity' },
       { name: 'final_rates_master_capacity', label: 'Final Rates — Master Capacity' },

@@ -52,7 +52,8 @@ export function saveWorkflows(workflows) {
 }
 
 // Stage 3 standardized tables per retrieved source — each source has
-// Locations, Core and Rates tables.
+// Locations, Core and Rates tables. IOC (index) stops after Stage 2, so it
+// contributes no tables from here on.
 export const STAGE3_SOURCE_TABLES = {
   firm: ['firm_locations_standardized', 'firm_core_standardized', 'firm_rates_standardized'],
   interruptible: [
@@ -61,7 +62,7 @@ export const STAGE3_SOURCE_TABLES = {
     'interruptible_rates_standardized',
   ],
   awards: ['awards_locations_standardized', 'awards_core_standardized', 'awards_rates_standardized'],
-  index: ['index_locations_standardized', 'index_core_standardized', 'index_rates_standardized'],
+  index: [],
 };
 
 // Stage 4 rec-del paired tables per retrieved source
@@ -69,7 +70,7 @@ export const STAGE4_SOURCE_TABLES = {
   firm: ['firm_locations_standardized_transformed'],
   interruptible: ['interruptible_standardized_transformed'],
   awards: ['awards_standardized_transformed'],
-  index: ['index_standardized_transformed'],
+  index: [],
 };
 
 // Stage 5 master capacity tables per retrieved source, plus the Final
@@ -82,7 +83,7 @@ export const STAGE5_SOURCE_TABLES = {
     'interruptible_rates_master_capacity',
   ],
   awards: ['awards_core_master_capacity', 'awards_locations_master_capacity', 'awards_rates_master_capacity'],
-  index: ['index_core_master_capacity', 'index_locations_master_capacity', 'index_rates_master_capacity'],
+  index: [],
 };
 const STAGE5_FINAL_TABLES = [
   'final_core_master_capacity',

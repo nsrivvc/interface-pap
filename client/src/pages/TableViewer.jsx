@@ -78,7 +78,6 @@ const STAGE5_GROUPS = [
   { label: 'Firm', accent: 'firm', test: (n) => n.startsWith('firm_') },
   { label: 'Interruptible', test: (n) => n.startsWith('interruptible_') },
   { label: 'Awards', test: (n) => n.startsWith('awards_') },
-  { label: 'IOC', test: (n) => n.startsWith('index_') },
   { label: 'Final', accent: 'final', test: (n) => n.startsWith('final_') },
 ];
 
@@ -115,11 +114,11 @@ const STAGE2_GROUPS = [
   { label: 'IOC', test: (n) => n === 'raw_index' },
 ];
 
+// IOC stops after Stage 2, so Stages 3-5 only group the other three sources.
 const STAGE3_GROUPS = [
   { label: 'Firm', test: (n) => n.startsWith('firm_') },
   { label: 'Interruptible', test: (n) => n.startsWith('interruptible_') },
   { label: 'Awards', test: (n) => n.startsWith('awards_') },
-  { label: 'IOC', test: (n) => n.startsWith('index_') },
 ];
 
 const STAGE4_GROUPS = STAGE3_GROUPS;
