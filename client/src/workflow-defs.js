@@ -68,8 +68,8 @@ export const STAGE3_SOURCE_TABLES = {
 // Stage 4 rec-del paired tables per retrieved source
 export const STAGE4_SOURCE_TABLES = {
   firm: ['firm_locations_standardized_transformed'],
-  interruptible: ['interruptible_standardized_transformed'],
-  awards: ['awards_standardized_transformed'],
+  interruptible: ['interruptible_locations_standardized_transformed'],
+  awards: ['awards_locations_standardized_transformed'],
   index: [],
 };
 

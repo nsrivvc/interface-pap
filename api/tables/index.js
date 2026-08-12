@@ -39,8 +39,8 @@ export const STAGE_TABLES = [
     stage: 'Stage 4 — Rec-Del Pairing',
     tables: [
       { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)' },
-      { name: 'interruptible_standardized_transformed', label: 'Interruptible — Standardized (Transformed)' },
-      { name: 'awards_standardized_transformed', label: 'Awards — Standardized (Transformed)' },
+      { name: 'interruptible_locations_standardized_transformed', label: 'Interruptible Locations — Standardized (Transformed)' },
+      { name: 'awards_locations_standardized_transformed', label: 'Awards Locations — Standardized (Transformed)' },
     ],
   },
   {

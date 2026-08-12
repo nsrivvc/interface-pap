@@ -7,6 +7,7 @@ import { signToken, requireAuth } from './auth.js';
 import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
+import { triggerStage12, stage12RunStatus } from './github.js';
 
 const app = express();
 app.use(cors());
@@ -90,8 +91,8 @@ const STAGE_TABLES = [
     stage: 'Stage 4 — Rec-Del Pairing',
     tables: [
       { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
-      { name: 'interruptible_standardized_transformed', label: 'Interruptible — Standardized (Transformed)', backing: 'stage3_enriched' },
-      { name: 'awards_standardized_transformed', label: 'Awards — Standardized (Transformed)', backing: 'stage3_enriched' },
+      { name: 'interruptible_locations_standardized_transformed', label: 'Interruptible Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
+      { name: 'awards_locations_standardized_transformed', label: 'Awards Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
     ],
   },
   {
@@ -168,6 +169,17 @@ app.post('/api/pipeline/retrieve-source', requireAuth, wrap(async (req, res) => 
 app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
   const n = Number(req.params.n);
   res.json(await runStage(n, req.body?.batchId));
+}));
+
+// Dispatch the Stage 1/2 GitHub Actions ingestion workflows for the selected sources
+app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => {
+  res.json(await triggerStage12(req.body?.sources));
+}));
+
+// Live status of the dispatched GitHub workflows (?files=a.yml,b.yml)
+app.get('/api/pipeline/stage12-status', requireAuth, wrap(async (req, res) => {
+  const files = String(req.query.files || '').split(',').filter(Boolean);
+  res.json(await stage12RunStatus(files));
 }));
 
 // ---------- Workflows ----------

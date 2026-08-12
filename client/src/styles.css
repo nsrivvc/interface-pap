@@ -532,6 +532,33 @@ button {
 .wf-schedule-row select {
   max-width: 280px;
 }
+.wf-pipeline-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.wf-pipeline-row input[type='text'],
+.wf-pipeline-row select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  background: #fff;
+  color: var(--navy);
+}
+.wf-pipeline-row input[type='text']:first-child {
+  width: 180px;
+}
+.wf-pipeline-row .wf-pipeline-target {
+  flex: 1;
+  min-width: 220px;
+}
+.wf-pipeline-row .wf-pipeline-notes {
+  width: 200px;
+}
 .wf-schedule-line {
   display: flex;
   flex-wrap: wrap;
@@ -544,6 +571,36 @@ button {
   color: var(--navy);
   font-size: 0.8rem;
   width: fit-content;
+}
+.wf-schedule-line.wf-schedule-none {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--slate);
+}
+.wf-lastrun {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--slate);
+}
+.wf-lastrun-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.wf-lastrun.ok .wf-lastrun-dot {
+  background: var(--success);
+}
+.wf-lastrun.err .wf-lastrun-dot {
+  background: var(--danger);
+}
+.wf-lastrun .badge {
+  margin-left: 2px;
 }
 .wf-schedule-clock {
   font-size: 0.85rem;
@@ -676,6 +733,51 @@ button {
 }
 .step-pill.source-pill.failed {
   background: #fbe6e4;
+}
+
+/* ---- Live GitHub Actions run status on a workflow card ---- */
+.gh-runs {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fbfcfe;
+}
+.gh-runs-head {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 6px;
+}
+.gh-run-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  padding: 4px 0;
+  color: var(--slate);
+}
+.gh-run-line.running {
+  color: var(--orange);
+}
+.gh-run-line.done {
+  color: var(--success);
+}
+.gh-run-line.failed {
+  color: var(--danger);
+}
+.gh-run-name {
+  font-weight: 600;
+}
+.gh-run-line a {
+  margin-left: auto;
+  color: var(--orange);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+.gh-run-line a:hover {
+  text-decoration: underline;
 }
 
 .wf-complete {

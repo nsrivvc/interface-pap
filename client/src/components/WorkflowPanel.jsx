@@ -56,15 +56,18 @@ export default function WorkflowPanel({ onPipelineRan }) {
   // Setup form
   const [configuring, setConfiguring] = useState(false);
   const [draftName, setDraftName] = useState('');
-  const [stageCount, setStageCount] = useState(0); // selected stages = STAGE_DEFS.slice(0, stageCount)
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
   const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
 
   // Run state:
-  // { id, sourceStates: [...], stageStates: [...], error, finished }
+  // { id, trigger, batchId, sourceStates, stageStates, github, githubRuns,
+  //   githubDone, error, finished }
+  // A run isn't over when the local stages finish — the dispatched GitHub
+  // Actions workflows must complete too (githubDone).
   const [run, setRun] = useState(null);
-  const isRunning = run !== null && !run.finished && !run.error;
+  const isRunning =
+    run !== null && !run.error && (!run.finished || (run.github && !run.githubDone));
 
   // Manual workflow triggers
   const [triggering, setTriggering] = useState(null); // source key while a trigger runs
@@ -90,12 +93,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
     }
   };
 
-  const toggleStage = (index) => {
-    // Clicking an unselected stage selects it plus everything before it;
-    // clicking a selected stage deselects it plus everything after it.
-    setStageCount((count) => (index < count ? index : index + 1));
-  };
-
   const toggleSource = (key) => {
     setDraftSources((sources) =>
       sources.includes(key) ? sources.filter((s) => s !== key) : [...sources, key]
@@ -105,7 +102,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const resetForm = () => {
     setConfiguring(false);
     setDraftName('');
-    setStageCount(0);
     setDraftSources(ALL_SOURCE_KEYS);
     setDraftTime('');
     setDraftTz(LOCAL_TZ);
@@ -117,7 +113,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
     // Keep sources in pipeline order regardless of click order
     const sources = ALL_SOURCE_KEYS.filter((k) => draftSources.includes(k));
     const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
-    const next = [...workflows, { id: Date.now(), name, stageCount, sources, schedule }];
+    // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5
+    const next = [...workflows, { id: Date.now(), name, stageCount: STAGE_DEFS.length, sources, schedule }];
     setWorkflows(next);
     saveWorkflows(next);
     resetForm();
@@ -129,21 +126,68 @@ export default function WorkflowPanel({ onPipelineRan }) {
     saveWorkflows(next);
   };
 
-  // Inline "set trigger time" editor on an existing workflow card
-  const [editingScheduleId, setEditingScheduleId] = useState(null);
-  const [editTime, setEditTime] = useState('');
-  const [editTz, setEditTz] = useState(LOCAL_TZ);
+  // Full inline editor on an existing workflow card: name, sources, trigger time
+  const [editingId, setEditingId] = useState(null);
+  const [editDraft, setEditDraft] = useState(null); // { name, sources, time, tz }
 
-  const saveSchedule = (id) => {
-    if (!editTime) return;
+  const startEdit = (wf) => {
+    setEditingId(wf.id);
+    setEditDraft({
+      name: wf.name,
+      sources: wf.sources,
+      time: wf.schedule?.time || '',
+      tz: wf.schedule?.tz || LOCAL_TZ,
+      pipelines: wf.pipelines || [],
+    });
+  };
+
+  // Extra pipelines attached to a workflow. Placeholder fields for now —
+  // what a pipeline actually points at will be wired up later.
+  const addEditPipeline = () =>
+    setEditDraft((d) => ({
+      ...d,
+      pipelines: [...d.pipelines, { id: Date.now(), name: '', stage: 3, target: '', notes: '' }],
+    }));
+
+  const updateEditPipeline = (id, patch) =>
+    setEditDraft((d) => ({
+      ...d,
+      pipelines: d.pipelines.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    }));
+
+  const removeEditPipeline = (id) =>
+    setEditDraft((d) => ({ ...d, pipelines: d.pipelines.filter((p) => p.id !== id) }));
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft(null);
+  };
+
+  const toggleEditSource = (key) =>
+    setEditDraft((d) => ({
+      ...d,
+      sources: d.sources.includes(key)
+        ? d.sources.filter((s) => s !== key)
+        : [...d.sources, key],
+    }));
+
+  const saveEdit = () => {
+    if (!editDraft.sources.length) return;
     const next = workflows.map((w) =>
-      w.id === id ? { ...w, schedule: { time: editTime, tz: editTz } } : w
+      w.id === editingId
+        ? {
+            ...w,
+            name: editDraft.name.trim() || w.name,
+            sources: ALL_SOURCE_KEYS.filter((k) => editDraft.sources.includes(k)),
+            schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
+            // Drop pipeline rows the user added but left entirely blank
+            pipelines: editDraft.pipelines.filter((p) => p.name.trim() || p.target.trim()),
+          }
+        : w
     );
     setWorkflows(next);
     saveWorkflows(next);
-    setEditingScheduleId(null);
-    setEditTime('');
-    setEditTz(LOCAL_TZ);
+    cancelEdit();
   };
 
   const removeWorkflow = (id) => {
@@ -163,14 +207,35 @@ export default function WorkflowPanel({ onPipelineRan }) {
     });
   };
 
-  const runWorkflow = async (wf) => {
+  // `trigger` is 'manual' (Run Workflow button) or 'auto' (scheduled run)
+  const runWorkflow = async (wf, trigger = 'manual') => {
     setRun({
       id: wf.id,
+      trigger,
+      batchId: null,
       sourceStates: Array(wf.sources.length).fill('pending'),
       stageStates: Array(wf.stageCount).fill('pending'),
+      github: null,
+      githubRuns: null,
+      githubDone: false,
       error: null,
       finished: false,
     });
+
+    // Kick off the real Stage 1/2 ingestion workflows on GitHub Actions —
+    // all sources selected dispatches the bronze_ingest orchestrator, a
+    // partial selection dispatches each source's own workflow.
+    try {
+      const github = await api('/api/pipeline/trigger-stage12', {
+        method: 'POST',
+        body: { sources: wf.sources },
+      });
+      setRun((r) => ({ ...r, github }));
+    } catch (err) {
+      setRun((r) => ({ ...r, error: `GitHub workflow trigger failed: ${err.message}` }));
+      recordLastRun(wf.id, { at: Date.now(), status: 'failed', trigger });
+      return;
+    }
     const setSourceState = (i, state) =>
       setRun((r) => ({ ...r, sourceStates: r.sourceStates.map((s, j) => (j === i ? state : s)) }));
     const setStageState = (i, state) =>
@@ -186,11 +251,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
           body: { source: wf.sources[j], batchId },
         });
         batchId = result.batchId;
+        setRun((r) => (r ? { ...r, batchId } : r));
         setSourceState(j, 'done');
       } catch (err) {
         setSourceState(j, 'failed');
         setRun((r) => ({ ...r, error: `Retrieve ${sourceLabel(wf.sources[j])} failed: ${err.message}` }));
-        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed' });
+        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed', trigger });
         return;
       }
     }
@@ -205,12 +271,13 @@ export default function WorkflowPanel({ onPipelineRan }) {
       } catch (err) {
         setStageState(i, 'failed');
         setRun((r) => ({ ...r, error: `${stage.label} failed: ${err.message}` }));
-        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed' });
+        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed', trigger });
         return;
       }
     }
     setRun((r) => ({ ...r, finished: true }));
-    recordLastRun(wf.id, { batchId, at: Date.now(), status: 'success' });
+    // Success isn't recorded here — the run only counts as complete once the
+    // dispatched GitHub Actions workflows finish (see the polling effect).
     onPipelineRan?.();
   };
 
@@ -232,7 +299,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
         const fireKey = `${dateKeyIn(tz)} ${time}`;
         if (firedRef.current[wf.id] === fireKey) continue;
         firedRef.current[wf.id] = fireKey;
-        runWorkflow(wf);
+        runWorkflow(wf, 'auto');
         break; // one scheduled run at a time
       }
     };
@@ -240,6 +307,45 @@ export default function WorkflowPanel({ onPipelineRan }) {
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Poll GitHub every few seconds for the dispatched workflows' run status,
+  // so the card updates live while the Actions runs are going. When they all
+  // finish, that outcome (not the local simulation) is the run's result.
+  const runRef = useRef(null);
+  runRef.current = run;
+
+  useEffect(() => {
+    const files = run?.github?.dispatched;
+    if (!files?.length || run.githubDone) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { runs } = await api(`/api/pipeline/stage12-status?files=${files.join(',')}`);
+        if (cancelled) return;
+        const done = runs.length > 0 && runs.every((x) => x.status === 'completed');
+        const cur = runRef.current;
+        if (done && cur && !cur.githubDone) {
+          const ok = runs.every((x) => x.conclusion === 'success');
+          recordLastRun(cur.id, {
+            batchId: cur.batchId,
+            at: Date.now(),
+            status: ok ? 'success' : 'failed',
+            trigger: cur.trigger,
+          });
+        }
+        setRun((r) => (r ? { ...r, githubRuns: runs, githubDone: done } : r));
+      } catch {
+        // transient (server restarting, rate limit) — just keep polling
+      }
+    };
+    poll();
+    const timer = setInterval(poll, 6000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.github, run?.githubDone]);
 
   // Re-render once a minute so the "next run in …" countdowns stay current
   const [, setClockTick] = useState(0);
@@ -268,9 +374,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
         <div className="card wf-config" style={{ marginBottom: 18 }}>
           <h3>Configure a Workflow</h3>
           <p className="muted" style={{ margin: '6px 0 14px' }}>
-            Check the source pipelines to retrieve, then pick which stages to run. Stages
-            depend on each other, so selecting one automatically includes everything before
-            it, and deselecting one removes everything after it.
+            Toggle the sources this workflow should pull. Every workflow runs the full
+            pipeline — Stage 1 through Stage 5 — for the sources you select.
           </p>
           <div className="field" style={{ maxWidth: 340 }}>
             <label>Workflow name</label>
@@ -282,47 +387,51 @@ export default function WorkflowPanel({ onPipelineRan }) {
             />
           </div>
 
-          {/* Source pipelines to retrieve */}
+          {/* Source pipelines to retrieve — the only switches on the form */}
           <div className="wf-sources" style={{ marginTop: 0 }}>
             <div className="wf-sources-head">
-              <strong>Stage 1 — API to Raw</strong>
-              <span className="muted">check the source pipelines this workflow should pull</span>
+              <strong>Sources</strong>
+              <span className="muted">toggle the source pipelines this workflow should pull</span>
             </div>
-            <div className="wf-source-list">
-              {SOURCE_DEFS.map((src) => (
-                <label key={src.key} className="wf-source-item">
-                  <input
-                    type="checkbox"
-                    checked={draftSources.includes(src.key)}
-                    onChange={() => toggleSource(src.key)}
-                  />
-                  <span>
+            <div className="wf-chip-row">
+              {SOURCE_DEFS.map((src) => {
+                const selected = draftSources.includes(src.key);
+                return (
+                  <button
+                    key={src.key}
+                    type="button"
+                    className={`wf-chip ${selected ? 'selected' : ''}`}
+                    onClick={() => toggleSource(src.key)}
+                  >
+                    <span className="wf-chip-check">{selected ? '✓' : '+'}</span>
                     {src.label}
-                    <span className="wf-chip-desc" style={{ display: 'block' }}>{src.desc}</span>
-                  </span>
-                </label>
-              ))}
+                    <span className="wf-chip-desc">{src.desc}</span>
+                  </button>
+                );
+              })}
             </div>
             {draftSources.length === 0 && (
               <p className="wf-sources-warn">Select at least one source to save this workflow.</p>
             )}
           </div>
 
-          {/* Stage blocks — greyed out until the stage pipelines are available */}
-          <div className="wf-chip-row" style={{ marginTop: 16 }}>
-            {STAGE_DEFS.map((stage, i) => (
-              <button
-                key={stage.key}
-                type="button"
-                className={`wf-chip ${i < stageCount ? 'selected' : ''}`}
-                disabled
-                title={`${stage.desc} — coming soon`}
-              >
-                <span className="wf-chip-check">{i < stageCount ? '✓' : '+'}</span>
-                {stage.label}
-                <span className="wf-chip-desc">{stage.desc}</span>
-              </button>
-            ))}
+          {/* Stages are fixed — every workflow runs the full pipeline */}
+          <div className="wf-sources" style={{ marginTop: 16, borderLeftColor: 'var(--navy)' }}>
+            <div className="wf-sources-head">
+              <strong>Stages that will run</strong>
+              <span className="muted">every workflow runs all five stages in order</span>
+            </div>
+            <div className="step-track" style={{ marginTop: 0 }}>
+              {[
+                'Stage 1 — API to Raw',
+                ...STAGE_DEFS.map((stage) => `${stage.label} — ${stage.desc}`),
+              ].map((label, i) => (
+                <span key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {i > 0 && <span className="stage-arrow">→</span>}
+                  <span className="step-pill">{label}</span>
+                </span>
+              ))}
+            </div>
           </div>
 
           {/* Optional scheduled trigger time */}
@@ -382,6 +491,143 @@ export default function WorkflowPanel({ onPipelineRan }) {
         const thisRun = run?.id === wf.id ? run : null;
         return (
           <div key={wf.id} className="card" style={{ marginBottom: 14 }}>
+            {editingId === wf.id ? (
+              <>
+                <h3 style={{ marginBottom: 10 }}>Edit Workflow</h3>
+                <div className="field" style={{ maxWidth: 340 }}>
+                  <label>Workflow name</label>
+                  <input
+                    type="text"
+                    value={editDraft.name}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+                  />
+                </div>
+                <div className="wf-sources-head" style={{ marginBottom: 8 }}>
+                  <strong>Sources</strong>
+                  <span className="muted">toggle the source pipelines this workflow should pull</span>
+                </div>
+                <div className="wf-chip-row" style={{ marginTop: 0 }}>
+                  {SOURCE_DEFS.map((src) => {
+                    const selected = editDraft.sources.includes(src.key);
+                    return (
+                      <button
+                        key={src.key}
+                        type="button"
+                        className={`wf-chip ${selected ? 'selected' : ''}`}
+                        onClick={() => toggleEditSource(src.key)}
+                      >
+                        <span className="wf-chip-check">{selected ? '✓' : '+'}</span>
+                        {src.label}
+                        <span className="wf-chip-desc">{src.desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {editDraft.sources.length === 0 && (
+                  <p className="wf-sources-warn">Select at least one source.</p>
+                )}
+                <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
+                  <strong>Pipelines</strong>
+                  <span className="muted">
+                    attach additional pipelines to this workflow — what they run will be
+                    configured later
+                  </span>
+                </div>
+                {editDraft.pipelines.length === 0 && (
+                  <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
+                    No pipelines added yet.
+                  </p>
+                )}
+                {editDraft.pipelines.map((p) => (
+                  <div key={p.id} className="wf-pipeline-row">
+                    <input
+                      type="text"
+                      placeholder="Pipeline name"
+                      value={p.name}
+                      onChange={(e) => updateEditPipeline(p.id, { name: e.target.value })}
+                    />
+                    <select
+                      value={p.stage}
+                      onChange={(e) => updateEditPipeline(p.id, { stage: Number(e.target.value) })}
+                      title="The stage this pipeline runs at"
+                    >
+                      <option value={1}>Stage 1 — API to Raw</option>
+                      {STAGE_DEFS.map((stage) => (
+                        <option key={stage.key} value={stage.key}>
+                          {stage.label} — {stage.desc}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      className="wf-pipeline-target"
+                      placeholder="Target (workflow file, endpoint, script…)"
+                      value={p.target}
+                      onChange={(e) => updateEditPipeline(p.id, { target: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="wf-pipeline-notes"
+                      placeholder="Notes (optional)"
+                      value={p.notes}
+                      onChange={(e) => updateEditPipeline(p.id, { notes: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      title="Remove this pipeline"
+                      onClick={() => removeEditPipeline(p.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="btn btn-outline" onClick={addEditPipeline}>
+                  + Add Pipeline
+                </button>
+                <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
+                  <strong>Trigger time</strong>
+                  <span className="muted">runs daily at this time — leave empty for manual-only</span>
+                </div>
+                <div className="wf-schedule-row">
+                  <input
+                    type="time"
+                    value={editDraft.time}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, time: e.target.value }))}
+                  />
+                  <select
+                    value={editDraft.tz}
+                    onChange={(e) => setEditDraft((d) => ({ ...d, tz: e.target.value }))}
+                  >
+                    {TIMEZONES.map((tz) => (
+                      <option key={tz} value={tz}>{tz.replaceAll('_', ' ')}</option>
+                    ))}
+                  </select>
+                  {editDraft.time && (
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => setEditDraft((d) => ({ ...d, time: '' }))}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+                  <button
+                    className="btn btn-navy"
+                    disabled={editDraft.sources.length === 0}
+                    onClick={saveEdit}
+                  >
+                    Save Changes
+                  </button>
+                  <button className="btn btn-outline" onClick={cancelEdit}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+            <>
             <div className="workflow-row">
               <div>
                 <h3>
@@ -394,6 +640,11 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   {wf.stageCount > 0 && (
                     <span className="badge manual" style={{ marginLeft: 4 }}>
                       {wf.stageCount} stage{wf.stageCount > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {wf.pipelines?.length > 0 && (
+                    <span className="badge manual" style={{ marginLeft: 4 }}>
+                      {wf.pipelines.length} pipeline{wf.pipelines.length > 1 ? 's' : ''}
                     </span>
                   )}
                   {wf.schedule && (
@@ -419,46 +670,28 @@ export default function WorkflowPanel({ onPipelineRan }) {
                       ✕
                     </button>
                   </div>
-                ) : editingScheduleId === wf.id ? (
-                  <div className="wf-schedule-row" style={{ marginTop: 8 }}>
-                    <input
-                      type="time"
-                      value={editTime}
-                      onChange={(e) => setEditTime(e.target.value)}
-                    />
-                    <select value={editTz} onChange={(e) => setEditTz(e.target.value)}>
-                      {TIMEZONES.map((tz) => (
-                        <option key={tz} value={tz}>{tz.replaceAll('_', ' ')}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      className="btn btn-navy"
-                      disabled={!editTime}
-                      onClick={() => saveSchedule(wf.id)}
-                    >
-                      Save
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={() => setEditingScheduleId(null)}
-                    >
-                      Cancel
-                    </button>
+                ) : (
+                  <div className="wf-schedule-line wf-schedule-none">
+                    <span className="wf-schedule-clock">🕒</span>
+                    No time selected
+                  </div>
+                )}
+                {wf.lastRun ? (
+                  <div className={`wf-lastrun ${wf.lastRun.status === 'success' ? 'ok' : 'err'}`}>
+                    <span className="wf-lastrun-dot" />
+                    Last run {wf.lastRun.status === 'success' ? 'completed' : 'failed'}{' '}
+                    {new Date(wf.lastRun.at).toLocaleString()}
+                    {wf.lastRun.trigger && (
+                      <span className={`badge ${wf.lastRun.trigger === 'auto' ? 'scheduled' : 'manual'}`}>
+                        {wf.lastRun.trigger === 'auto' ? 'automatic run' : 'manual run'}
+                      </span>
+                    )}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    className="wf-set-schedule"
-                    onClick={() => {
-                      setEditingScheduleId(wf.id);
-                      setEditTime('');
-                      setEditTz(LOCAL_TZ);
-                    }}
-                  >
-                    🕒 Set trigger time
-                  </button>
+                  <div className="wf-lastrun none">
+                    <span className="wf-lastrun-dot" />
+                    This workflow hasn't run yet
+                  </div>
                 )}
                 {/* Step pills only appear while a run is in progress (or just finished) */}
                 {thisRun && (
@@ -504,13 +737,21 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   disabled={isRunning}
                   onClick={() => runWorkflow(wf)}
                 >
-                  {thisRun && !thisRun.finished && !thisRun.error ? (
+                  {thisRun && isRunning ? (
                     <>
                       <span className="spin">⟳</span> Running…
                     </>
                   ) : (
                     'Run Workflow'
                   )}
+                </button>
+                <button
+                  className="btn btn-outline"
+                  disabled={isRunning}
+                  onClick={() => startEdit(wf)}
+                  title="Edit this workflow's sources and trigger time"
+                >
+                  ✎ Edit
                 </button>
                 <button
                   className="btn btn-outline"
@@ -523,17 +764,72 @@ export default function WorkflowPanel({ onPipelineRan }) {
               </div>
             </div>
 
-            {thisRun?.finished && (
-              <div className="wf-complete">
-                <span className="wf-complete-icon">✓</span>
-                Workflow complete — {wf.sources.length} source
-                {wf.sources.length > 1 ? 's' : ''} retrieved
-                {wf.stageCount > 0 &&
-                  `, ${wf.stageCount} stage${wf.stageCount > 1 ? 's' : ''} finished`}
-                .
+            {thisRun?.github && (
+              <div className="gh-runs">
+                <div className="gh-runs-head">⚙ GitHub Actions — {thisRun.github.repo}</div>
+                {thisRun.github.dispatched.map((file) => {
+                  const info = thisRun.githubRuns?.find((r) => r.file === file);
+                  const state =
+                    !info || info.status === 'queued'
+                      ? 'queued'
+                      : info.status === 'in_progress'
+                        ? 'running'
+                        : info.conclusion === 'success'
+                          ? 'done'
+                          : 'failed';
+                  return (
+                    <div key={file} className={`gh-run-line ${state}`}>
+                      {state === 'done' ? (
+                        <span className="tick">✓</span>
+                      ) : state === 'failed' ? (
+                        <span className="tick">✕</span>
+                      ) : (
+                        <span className="spin">⟳</span>
+                      )}
+                      <span className="gh-run-name">{info?.name || file}</span>
+                      <span>
+                        {state === 'queued'
+                          ? 'queued…'
+                          : state === 'running'
+                            ? 'running…'
+                            : info.conclusion}
+                      </span>
+                      {info?.url && (
+                        <a href={info.url} target="_blank" rel="noreferrer">
+                          view on GitHub ↗
+                        </a>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
+            {thisRun?.finished && thisRun.github && !thisRun.githubDone && (
+              <div className="status-line ok">
+                <span className="spin">⟳</span> Stage 1/2 ingestion is still running on
+                GitHub — the workflow completes when it finishes.
+              </div>
+            )}
+            {thisRun?.finished &&
+              thisRun.githubDone &&
+              (thisRun.githubRuns?.every((r) => r.conclusion === 'success') ? (
+                <div className="wf-complete">
+                  <span className="wf-complete-icon">✓</span>
+                  Workflow complete — {wf.sources.length} source
+                  {wf.sources.length > 1 ? 's' : ''} retrieved
+                  {wf.stageCount > 0 &&
+                    `, ${wf.stageCount} stage${wf.stageCount > 1 ? 's' : ''} finished`}
+                  , GitHub ingestion succeeded.
+                </div>
+              ) : (
+                <div className="status-line err">
+                  GitHub ingestion failed — open the run above for logs. This workflow run
+                  was recorded as failed.
+                </div>
+              ))}
             {thisRun?.error && <div className="status-line err">{thisRun.error}</div>}
+            </>
+            )}
           </div>
         );
       })}
