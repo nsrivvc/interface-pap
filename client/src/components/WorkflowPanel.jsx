@@ -225,11 +225,21 @@ export default function WorkflowPanel({ onPipelineRan }) {
     // Kick off the real Stage 1/2 ingestion workflows on GitHub Actions —
     // all sources selected dispatches the bronze_ingest orchestrator, a
     // partial selection dispatches each source's own workflow.
+    //
+    // A bare 5xx/network failure usually means the dev API was mid-restart
+    // (node --watch), so retry once before treating it as a real failure.
+    const trigger12 = () =>
+      api('/api/pipeline/trigger-stage12', { method: 'POST', body: { sources: wf.sources } });
     try {
-      const github = await api('/api/pipeline/trigger-stage12', {
-        method: 'POST',
-        body: { sources: wf.sources },
-      });
+      let github;
+      try {
+        github = await trigger12();
+      } catch (err) {
+        const transient = /^Request failed \(5|failed to fetch|networkerror/i.test(err.message);
+        if (!transient) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        github = await trigger12();
+      }
       setRun((r) => ({ ...r, github }));
     } catch (err) {
       setRun((r) => ({ ...r, error: `GitHub workflow trigger failed: ${err.message}` }));
