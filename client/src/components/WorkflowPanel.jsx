@@ -12,6 +12,47 @@ import {
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+// GitHub workflow file per source (mirrors the server's mapping), used to tie
+// each source pill to its real Actions run.
+const SOURCE_FILES = {
+  firm: 'bronze_ingest_firm.yml',
+  interruptible: 'bronze_ingest_interruptibles.yml',
+  awards: 'bronze_ingest_awards.yml',
+  index: 'bronze_ingest_ioc.yml',
+};
+// Match orchestrator job names back to sources, and Silver job names to stages
+const SOURCE_JOB_RE = {
+  firm: /firm/i,
+  interruptible: /interrupt|(^|[^a-z])it([^a-z]|$)/i,
+  awards: /award/i,
+  index: /ioc|index/i,
+};
+const STAGE_JOB_RE = {
+  3: /stage.?_?3|bronze.?to.?silver/i,
+  4: /stage.?_?4|rec.?del/i,
+  5: /stage.?_?5|master.?capacity/i,
+};
+const ghState = (status, conclusion) =>
+  status !== 'completed' ? 'running' : conclusion === 'success' ? 'done' : 'failed';
+
+// Per-job pill state: a queued job hasn't started yet, so its pill stays dim
+// ('pending') until GitHub actually starts executing it. Skipped jobs also
+// read as pending rather than failed.
+const jobState = (status, conclusion) =>
+  status === 'completed'
+    ? conclusion === 'success'
+      ? 'done'
+      : conclusion === 'skipped'
+        ? 'pending'
+        : 'failed'
+    : status === 'in_progress'
+      ? 'running'
+      : 'pending';
+
+// An in-flight dispatch survives page navigation/refresh via localStorage, so
+// the card keeps updating (and records the outcome) after coming back.
+const ACTIVE_RUN_KEY = 'pap_active_run_v1';
+
 const TIMEZONES = (() => {
   try {
     return Intl.supportedValuesOf('timeZone');
@@ -209,17 +250,20 @@ export default function WorkflowPanel({ onPipelineRan }) {
 
   // `trigger` is 'manual' (Run Workflow button) or 'auto' (scheduled run)
   const runWorkflow = async (wf, trigger = 'manual') => {
+    const startedAt = Date.now();
     setRun({
       id: wf.id,
       trigger,
-      batchId: null,
+      sources: wf.sources,
       sourceStates: Array(wf.sources.length).fill('pending'),
       stageStates: Array(wf.stageCount).fill('pending'),
       github: null,
       githubRuns: null,
       githubDone: false,
+      ok: null,
       error: null,
       finished: false,
+      startedAt,
     });
 
     // Kick off the real Stage 1/2 ingestion workflows on GitHub Actions —
@@ -241,55 +285,52 @@ export default function WorkflowPanel({ onPipelineRan }) {
         github = await trigger12();
       }
       setRun((r) => ({ ...r, github }));
+      localStorage.setItem(
+        ACTIVE_RUN_KEY,
+        JSON.stringify({
+          wfId: wf.id,
+          trigger,
+          sources: wf.sources,
+          stageCount: wf.stageCount,
+          github,
+          startedAt,
+        })
+      );
     } catch (err) {
-      setRun((r) => ({ ...r, error: `GitHub workflow trigger failed: ${err.message}` }));
+      setRun((r) => ({ ...r, error: `GitHub workflow trigger failed: ${err.message}`, finished: true }));
       recordLastRun(wf.id, { at: Date.now(), status: 'failed', trigger });
       return;
     }
-    const setSourceState = (i, state) =>
-      setRun((r) => ({ ...r, sourceStates: r.sourceStates.map((s, j) => (j === i ? state : s)) }));
-    const setStageState = (i, state) =>
-      setRun((r) => ({ ...r, stageStates: r.stageStates.map((s, j) => (j === i ? state : s)) }));
-
-    // Retrieve each selected source in turn, into the same batch
-    let batchId;
-    for (let j = 0; j < wf.sources.length; j++) {
-      setSourceState(j, 'running');
-      try {
-        const result = await api('/api/pipeline/retrieve-source', {
-          method: 'POST',
-          body: { source: wf.sources[j], batchId },
-        });
-        batchId = result.batchId;
-        setRun((r) => (r ? { ...r, batchId } : r));
-        setSourceState(j, 'done');
-      } catch (err) {
-        setSourceState(j, 'failed');
-        setRun((r) => ({ ...r, error: `Retrieve ${sourceLabel(wf.sources[j])} failed: ${err.message}` }));
-        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed', trigger });
-        return;
-      }
-    }
-
-    // Then run the selected stages in order
-    for (let i = 0; i < wf.stageCount; i++) {
-      const stage = STAGE_DEFS[i];
-      setStageState(i, 'running');
-      try {
-        await api(`/api/pipeline/stage/${stage.apiStage}`, { method: 'POST', body: { batchId } });
-        setStageState(i, 'done');
-      } catch (err) {
-        setStageState(i, 'failed');
-        setRun((r) => ({ ...r, error: `${stage.label} failed: ${err.message}` }));
-        recordLastRun(wf.id, { batchId, at: Date.now(), status: 'failed', trigger });
-        return;
-      }
-    }
-    setRun((r) => ({ ...r, finished: true }));
-    // Success isn't recorded here — the run only counts as complete once the
-    // dispatched GitHub Actions workflows finish (see the polling effect).
-    onPipelineRan?.();
+    // From here the run is entirely GitHub-driven: the polling effect below
+    // mirrors the real Actions runs onto the source and stage pills, and the
+    // run finishes when the ingestion AND the Silver pipeline finish.
   };
+
+  // Resume an in-flight dispatch after a page navigation or refresh
+  useEffect(() => {
+    if (run) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY));
+      if (!saved?.github || Date.now() - saved.startedAt > 2 * 60 * 60 * 1000) return;
+      setRun({
+        id: saved.wfId,
+        trigger: saved.trigger,
+        sources: saved.sources,
+        sourceStates: Array(saved.sources.length).fill('pending'),
+        stageStates: Array(saved.stageCount).fill('pending'),
+        github: saved.github,
+        githubRuns: null,
+        githubDone: false,
+        ok: null,
+        error: null,
+        finished: false,
+        startedAt: saved.startedAt,
+      });
+    } catch {
+      // corrupt saved state — ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Scheduler: while the dashboard is open, check every 15s whether a
   // workflow's trigger time has arrived in its own timezone; fire once per day.
@@ -328,22 +369,114 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const files = run?.github?.dispatched;
     if (!files?.length || run.githubDone) return;
     let cancelled = false;
+    let silverGrace = 0; // polls waited for the Silver run to appear
     const poll = async () => {
       try {
-        const { runs } = await api(`/api/pipeline/stage12-status?files=${files.join(',')}`);
-        if (cancelled) return;
-        const done = runs.length > 0 && runs.every((x) => x.status === 'completed');
         const cur = runRef.current;
-        if (done && cur && !cur.githubDone) {
-          const ok = runs.every((x) => x.conclusion === 'success');
+        if (!cur) return;
+        // 60s of clock-skew slack; runs older than this are a previous dispatch
+        const since = new Date(cur.startedAt - 60000).toISOString();
+        const res = await api(
+          `/api/pipeline/run-status?files=${files.join(',')}&since=${encodeURIComponent(since)}`
+        );
+        if (cancelled) return;
+        const { bronze, silver } = res;
+        const orchestrated = files.length === 1 && files[0] === 'bronze_ingest.yml';
+
+        // Stage 1 source pills — each selected source's real ingestion run
+        const sourceStates = cur.sources.map((key) => {
+          if (orchestrated) {
+            const b = bronze[0];
+            if (!b?.run) return 'running'; // queued on GitHub
+            const job = (b.jobs || []).find((j) => SOURCE_JOB_RE[key].test(j.name));
+            return job ? jobState(job.status, job.conclusion) : ghState(b.run.status, b.run.conclusion);
+          }
+          const b = bronze.find((x) => x.file === SOURCE_FILES[key]);
+          return b?.run ? ghState(b.run.status, b.run.conclusion) : 'running';
+        });
+
+        // Stage 2 pill = the ingestion runs themselves
+        const started = bronze.filter((b) => b.run);
+        const allDone =
+          started.length === bronze.length && started.every((b) => b.run.status === 'completed');
+        const anyFailed = started.some(
+          (b) => b.run.status === 'completed' && b.run.conclusion !== 'success'
+        );
+        const s2 = allDone ? (anyFailed ? 'failed' : 'done') : anyFailed ? 'failed' : 'running';
+
+        // Stage 3-5 pills = the Silver repo run this dispatch triggered,
+        // per-stage via its job names when they identify a stage.
+        const silverJobs = silver.flatMap((r) => (r.jobs || []).map((job) => ({ r, job })));
+        const stageState = (key) => {
+          if (!silver.length) return 'pending';
+          const hits = silverJobs.filter(({ job }) => STAGE_JOB_RE[key].test(job.name));
+          if (hits.length) {
+            // A stage may span several jobs (e.g. stage 5 core/locations/rates):
+            // failed if any failed, done only when ALL are done, running if any
+            // is executing, otherwise still pending.
+            const states = hits.map(({ job }) => jobState(job.status, job.conclusion));
+            if (states.includes('failed')) return 'failed';
+            if (states.every((s) => s === 'done')) return 'done';
+            if (states.includes('running')) return 'running';
+            if (states.includes('done')) return 'running'; // partially complete
+            return 'pending';
+          }
+          return ghState(silver[0].status, silver[0].conclusion);
+        };
+        const stageStates = [s2, stageState(3), stageState(4), stageState(5)].slice(
+          0,
+          cur.stageStates.length
+        );
+
+        // Lines for the GitHub Actions panel
+        const githubRuns = [
+          ...bronze.map((b) => ({
+            key: b.file,
+            name: b.run?.name || b.file,
+            state: b.run ? ghState(b.run.status, b.run.conclusion) : 'queued',
+            url: b.run?.url || null,
+          })),
+          ...silver.map((r, i) => ({
+            key: `silver-${i}`,
+            name: `${r.name} (stages 3-5)`,
+            state: ghState(r.status, r.conclusion),
+            url: r.url,
+          })),
+        ];
+
+        // The run is over when the ingestion finished and the Silver run
+        // either finished too, or failed to appear within ~1 minute.
+        let done = false;
+        if (allDone) {
+          if (anyFailed) done = true;
+          else if (silver.length) done = silver.every((r) => r.status === 'completed');
+          else done = ++silverGrace >= 10;
+        }
+        const ok =
+          done && !anyFailed && silver.every((r) => r.conclusion === 'success');
+
+        if (done && !cur.githubDone) {
           recordLastRun(cur.id, {
-            batchId: cur.batchId,
             at: Date.now(),
             status: ok ? 'success' : 'failed',
             trigger: cur.trigger,
           });
+          localStorage.removeItem(ACTIVE_RUN_KEY);
+          onPipelineRan?.();
         }
-        setRun((r) => (r ? { ...r, githubRuns: runs, githubDone: done } : r));
+        setRun((r) =>
+          r
+            ? {
+                ...r,
+                sourceStates,
+                stageStates,
+                githubRuns,
+                githubDone: done,
+                finished: done ? true : r.finished,
+                ok: done ? ok : r.ok,
+              }
+            : r
+        );
       } catch {
         // transient (server restarting, rate limit) — just keep polling
       }
@@ -776,65 +909,44 @@ export default function WorkflowPanel({ onPipelineRan }) {
 
             {thisRun?.github && (
               <div className="gh-runs">
-                <div className="gh-runs-head">⚙ GitHub Actions — {thisRun.github.repo}</div>
-                {thisRun.github.dispatched.map((file) => {
-                  const info = thisRun.githubRuns?.find((r) => r.file === file);
-                  const state =
-                    !info || info.status === 'queued'
-                      ? 'queued'
-                      : info.status === 'in_progress'
-                        ? 'running'
-                        : info.conclusion === 'success'
-                          ? 'done'
-                          : 'failed';
-                  return (
-                    <div key={file} className={`gh-run-line ${state}`}>
-                      {state === 'done' ? (
-                        <span className="tick">✓</span>
-                      ) : state === 'failed' ? (
-                        <span className="tick">✕</span>
-                      ) : (
-                        <span className="spin">⟳</span>
-                      )}
-                      <span className="gh-run-name">{info?.name || file}</span>
-                      <span>
-                        {state === 'queued'
-                          ? 'queued…'
-                          : state === 'running'
-                            ? 'running…'
-                            : info.conclusion}
-                      </span>
-                      {info?.url && (
-                        <a href={info.url} target="_blank" rel="noreferrer">
-                          view on GitHub ↗
-                        </a>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {thisRun?.finished && thisRun.github && !thisRun.githubDone && (
-              <div className="status-line ok">
-                <span className="spin">⟳</span> Stage 1/2 ingestion is still running on
-                GitHub — the workflow completes when it finishes.
+                <div className="gh-runs-head">⚙ GitHub Actions — live pipeline runs</div>
+                {(
+                  thisRun.githubRuns ||
+                  thisRun.github.dispatched.map((f) => ({ key: f, name: f, state: 'queued', url: null }))
+                ).map((r) => (
+                  <div key={r.key} className={`gh-run-line ${r.state}`}>
+                    {r.state === 'done' ? (
+                      <span className="tick">✓</span>
+                    ) : r.state === 'failed' ? (
+                      <span className="tick">✕</span>
+                    ) : (
+                      <span className="spin">⟳</span>
+                    )}
+                    <span className="gh-run-name">{r.name}</span>
+                    <span>
+                      {r.state === 'queued' ? 'queued…' : r.state === 'running' ? 'running…' : r.state}
+                    </span>
+                    {r.url && (
+                      <a href={r.url} target="_blank" rel="noreferrer">
+                        view on GitHub ↗
+                      </a>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
             {thisRun?.finished &&
               thisRun.githubDone &&
-              (thisRun.githubRuns?.every((r) => r.conclusion === 'success') ? (
+              !thisRun.error &&
+              (thisRun.ok ? (
                 <div className="wf-complete">
                   <span className="wf-complete-icon">✓</span>
-                  Workflow complete — {wf.sources.length} source
-                  {wf.sources.length > 1 ? 's' : ''} retrieved
-                  {wf.stageCount > 0 &&
-                    `, ${wf.stageCount} stage${wf.stageCount > 1 ? 's' : ''} finished`}
-                  , GitHub ingestion succeeded.
+                  Workflow complete — ingestion and Silver pipeline finished successfully.
                 </div>
               ) : (
                 <div className="status-line err">
-                  GitHub ingestion failed — open the run above for logs. This workflow run
-                  was recorded as failed.
+                  Pipeline run failed — open the runs above for logs. This workflow run was
+                  recorded as failed.
                 </div>
               ))}
             {thisRun?.error && <div className="status-line err">{thisRun.error}</div>}

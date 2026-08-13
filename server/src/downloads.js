@@ -171,9 +171,26 @@ export function registerDownloadRoute(app, tableIndex) {
         return res.download(file.path, `${table.name}__${path.basename(file.path)}`);
       }
 
+      // raw_payload duplicates every business column as a large JSON blob;
+      // leaving it out keeps spreadsheet exports small and fast. The Parquet
+      // download is the faithful copy that includes it.
       let rows = [];
       try {
-        rows = await sql.query(`SELECT * FROM ${table.backing} ORDER BY id DESC`);
+        const [schema, name] = table.backing.includes('.')
+          ? table.backing.split('.')
+          : ['public', table.backing];
+        const cols = await sql`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_schema = ${schema} AND table_name = ${name}
+          ORDER BY ordinal_position`;
+        const selected = cols
+          .map((c) => c.column_name)
+          .filter((c) => c !== 'raw_payload')
+          .map((c) => `"${c}"`)
+          .join(', ');
+        rows = await sql.query(
+          `SELECT ${selected || '*'} FROM ${table.backing} ORDER BY ${table.orderBy || 'id'} DESC`
+        );
       } catch {
         rows = [];
       }

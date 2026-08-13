@@ -7,7 +7,7 @@ import { signToken, requireAuth } from './auth.js';
 import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
-import { triggerStage12, stage12RunStatus } from './github.js';
+import { triggerStage12, pipelineRunStatus } from './github.js';
 
 const app = express();
 app.use(cors());
@@ -55,61 +55,67 @@ app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: req.user }))
 // Postgres table the virtual table reads from until the real per-source
 // tables exist in Neon.
 const STAGE_TABLES = [
+  // The raw tables read the real Bronze tables the ingestion workflows load
+  // into Neon (bronze schema, one table per source feed).
   {
     stage: 'Stage 1 — API to Raw',
     tables: [
-      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'source_data' },
-      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'source_data' },
-      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'source_data' },
-      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'source_data' },
+      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
+      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
+      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
+      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
     ],
   },
   {
     stage: 'Stage 2 — JSON-Bronze',
     tables: [
-      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'source_data' },
-      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'source_data' },
-      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'source_data' },
-      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'source_data' },
+      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
+      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
+      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
+      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
     ],
   },
+  // Stage 3-5 firm tables read the real Silver tables the bronze_to_silver
+  // pipeline writes in Neon. Interruptible/Awards silver tables don't exist
+  // yet — their backings are the expected future names, so they show 0 rows
+  // until those pipelines land.
   {
     stage: 'Stage 3 — Silver Staging',
     tables: [
-      { name: 'firm_locations_standardized', label: 'Firm Locations — Standardized', backing: 'stage2_normalized' },
-      { name: 'firm_core_standardized', label: 'Firm Core — Standardized', backing: 'stage2_normalized' },
-      { name: 'firm_rates_standardized', label: 'Firm Rates — Standardized', backing: 'stage2_normalized' },
-      { name: 'interruptible_locations_standardized', label: 'Interruptible Locations — Standardized', backing: 'stage2_normalized' },
-      { name: 'interruptible_core_standardized', label: 'Interruptible Core — Standardized', backing: 'stage2_normalized' },
-      { name: 'interruptible_rates_standardized', label: 'Interruptible Rates — Standardized', backing: 'stage2_normalized' },
-      { name: 'awards_locations_standardized', label: 'Awards Locations — Standardized', backing: 'stage2_normalized' },
-      { name: 'awards_core_standardized', label: 'Awards Core — Standardized', backing: 'stage2_normalized' },
-      { name: 'awards_rates_standardized', label: 'Awards Rates — Standardized', backing: 'stage2_normalized' },
+      { name: 'firm_locations_standardized', label: 'Firm Locations — Standardized', backing: 'silver_staging.firm_locations', orderBy: '"index"' },
+      { name: 'firm_core_standardized', label: 'Firm Core — Standardized', backing: 'silver_staging.firm_core', orderBy: 'bronze_row_id' },
+      { name: 'firm_rates_standardized', label: 'Firm Rates — Standardized', backing: 'silver_staging.firm_rates', orderBy: 'bronze_row_id' },
+      { name: 'interruptible_locations_standardized', label: 'Interruptible Locations — Standardized', backing: 'silver_staging.interruptible_locations' },
+      { name: 'interruptible_core_standardized', label: 'Interruptible Core — Standardized', backing: 'silver_staging.interruptible_core' },
+      { name: 'interruptible_rates_standardized', label: 'Interruptible Rates — Standardized', backing: 'silver_staging.interruptible_rates' },
+      { name: 'awards_locations_standardized', label: 'Awards Locations — Standardized', backing: 'silver_staging.awards_locations' },
+      { name: 'awards_core_standardized', label: 'Awards Core — Standardized', backing: 'silver_staging.awards_core' },
+      { name: 'awards_rates_standardized', label: 'Awards Rates — Standardized', backing: 'silver_staging.awards_rates' },
     ],
   },
   {
     stage: 'Stage 4 — Rec-Del Pairing',
     tables: [
-      { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
-      { name: 'interruptible_locations_standardized_transformed', label: 'Interruptible Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
-      { name: 'awards_locations_standardized_transformed', label: 'Awards Locations — Standardized (Transformed)', backing: 'stage3_enriched' },
+      { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)', backing: 'silver.firm_rec_del_pair', orderBy: 'rec_del_pair_id' },
+      { name: 'interruptible_locations_standardized_transformed', label: 'Interruptible Locations — Standardized (Transformed)', backing: 'silver.interruptible_rec_del_pair' },
+      { name: 'awards_locations_standardized_transformed', label: 'Awards Locations — Standardized (Transformed)', backing: 'silver.awards_rec_del_pair' },
     ],
   },
   {
     stage: 'Stage 5 — Master Capacity',
     tables: [
-      { name: 'firm_core_master_capacity', label: 'Firm Core — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'firm_locations_master_capacity', label: 'Firm Locations — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'firm_rates_master_capacity', label: 'Firm Rates — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'interruptible_core_master_capacity', label: 'Interruptible Core — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'interruptible_locations_master_capacity', label: 'Interruptible Locations — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'interruptible_rates_master_capacity', label: 'Interruptible Rates — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'awards_core_master_capacity', label: 'Awards Core — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'awards_locations_master_capacity', label: 'Awards Locations — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'awards_rates_master_capacity', label: 'Awards Rates — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'final_core_master_capacity', label: 'Final Core — Master Capacity', backing: 'final_core_master_capacity' },
-      { name: 'final_locations_master_capacity', label: 'Final Locations — Master Capacity', backing: 'stage4_aggregated' },
-      { name: 'final_rates_master_capacity', label: 'Final Rates — Master Capacity', backing: 'stage4_aggregated' },
+      { name: 'firm_core_master_capacity', label: 'Firm Core — Master Capacity', backing: 'silver.firm_core_master_capacity', orderBy: 'firm_core_id' },
+      { name: 'firm_locations_master_capacity', label: 'Firm Locations — Master Capacity', backing: 'silver.firm_locations_master_capacity', orderBy: 'firm_locations_id' },
+      { name: 'firm_rates_master_capacity', label: 'Firm Rates — Master Capacity', backing: 'silver.firm_rates_master_capacity', orderBy: 'firm_rates_id' },
+      { name: 'interruptible_core_master_capacity', label: 'Interruptible Core — Master Capacity', backing: 'silver.interruptible_core_master_capacity' },
+      { name: 'interruptible_locations_master_capacity', label: 'Interruptible Locations — Master Capacity', backing: 'silver.interruptible_locations_master_capacity' },
+      { name: 'interruptible_rates_master_capacity', label: 'Interruptible Rates — Master Capacity', backing: 'silver.interruptible_rates_master_capacity' },
+      { name: 'awards_core_master_capacity', label: 'Awards Core — Master Capacity', backing: 'silver.awards_core_master_capacity' },
+      { name: 'awards_locations_master_capacity', label: 'Awards Locations — Master Capacity', backing: 'silver.awards_locations_master_capacity' },
+      { name: 'awards_rates_master_capacity', label: 'Awards Rates — Master Capacity', backing: 'silver.awards_rates_master_capacity' },
+      { name: 'final_core_master_capacity', label: 'Final Core — Master Capacity', backing: 'silver.final_core_master_capacity', orderBy: 'final_core_id' },
+      { name: 'final_locations_master_capacity', label: 'Final Locations — Master Capacity', backing: 'silver.final_locations_master_capacity', orderBy: 'final_locations_id' },
+      { name: 'final_rates_master_capacity', label: 'Final Rates — Master Capacity', backing: 'silver.final_rates_master_capacity', orderBy: 'final_rates_id' },
     ],
   },
   {
@@ -154,7 +160,9 @@ app.get('/api/tables/:name', requireAuth, wrap(async (req, res) => {
   if (!table) throw new Error('Unknown table.');
   let rows = [];
   try {
-    rows = await sql.query(`SELECT * FROM ${table.backing} ORDER BY id DESC LIMIT 200`);
+    rows = await sql.query(
+      `SELECT * FROM ${table.backing} ORDER BY ${table.orderBy || 'id'} DESC LIMIT 200`
+    );
   } catch {
     // No database — show an empty table
   }
@@ -176,10 +184,11 @@ app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => 
   res.json(await triggerStage12(req.body?.sources));
 }));
 
-// Live status of the dispatched GitHub workflows (?files=a.yml,b.yml)
-app.get('/api/pipeline/stage12-status', requireAuth, wrap(async (req, res) => {
+// Live status of a dispatch: ingestion runs + the Silver runs they triggered
+// (?files=a.yml,b.yml&since=ISO)
+app.get('/api/pipeline/run-status', requireAuth, wrap(async (req, res) => {
   const files = String(req.query.files || '').split(',').filter(Boolean);
-  res.json(await stage12RunStatus(files));
+  res.json(await pipelineRunStatus(files, req.query.since));
 }));
 
 // ---------- Workflows ----------

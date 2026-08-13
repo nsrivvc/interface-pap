@@ -59,12 +59,22 @@ export async function triggerStage12(sources) {
 
 const KNOWN_WORKFLOWS = new Set(['bronze_ingest.yml', ...Object.values(SOURCE_WORKFLOWS)]);
 
-/** Latest run status for each dispatched workflow file, for live UI updates. */
-export async function stage12RunStatus(files) {
+// The Silver repo runs Stages 3-5, triggered by the ingestion's final
+// repository_dispatch (bronze-<source>-loaded).
+const SILVER_REPO = process.env.SILVER_GITHUB_REPO || 'nsrivvc/bronze_to_silver_conversion';
+
+/**
+ * Live status of a dispatch: the Stage 1/2 ingestion run per dispatched file
+ * (with its jobs), plus any Stage 3-5 runs the ingestion triggered in the
+ * Silver repo since `sinceIso`. Runs older than `sinceIso` are ignored so a
+ * fresh dispatch never shows a previous run's result.
+ */
+export async function pipelineRunStatus(files, sinceIso) {
   const token = process.env.GITHUB_TOKEN;
   if (!token) throw new Error('GITHUB_TOKEN is not set.');
   const wanted = (files || []).filter((f) => KNOWN_WORKFLOWS.has(f));
   if (!wanted.length) throw new Error('No known workflow files requested.');
+  const since = sinceIso ? Date.parse(sinceIso) : 0;
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -72,24 +82,68 @@ export async function stage12RunStatus(files) {
     'X-GitHub-Api-Version': '2022-11-28',
     'User-Agent': 'interface-pap',
   };
-  const runs = await Promise.all(
+
+  const jobsOf = async (run) => {
+    try {
+      const res = await fetch(`${run.jobs_url}?per_page=30`, { headers });
+      if (!res.ok) return [];
+      return ((await res.json()).jobs || []).map((j) => ({
+        name: j.name,
+        status: j.status,
+        conclusion: j.conclusion,
+      }));
+    } catch {
+      return [];
+    }
+  };
+
+  const bronze = await Promise.all(
     wanted.map(async (file) => {
       const res = await fetch(
         `https://api.github.com/repos/${REPO}/actions/workflows/${encodeURIComponent(file)}/runs?per_page=1`,
         { headers }
       );
-      if (!res.ok) return { file, status: 'unknown', conclusion: null, url: null };
+      if (!res.ok) return { file, run: null, jobs: [] };
       const run = (await res.json()).workflow_runs?.[0];
-      if (!run) return { file, status: 'queued', conclusion: null, url: null };
+      if (!run || Date.parse(run.created_at) < since) return { file, run: null, jobs: [] };
       return {
         file,
-        name: run.name,
-        status: run.status, // queued | in_progress | completed
-        conclusion: run.conclusion, // success | failure | cancelled | null
-        url: run.html_url,
-        startedAt: run.run_started_at,
+        run: {
+          name: run.name,
+          status: run.status, // queued | in_progress | completed
+          conclusion: run.conclusion, // success | failure | cancelled | null
+          url: run.html_url,
+          createdAt: run.created_at,
+        },
+        jobs: await jobsOf(run),
       };
     })
   );
-  return { repo: REPO, runs };
+
+  let silver = [];
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${SILVER_REPO}/actions/runs?event=repository_dispatch&per_page=10`,
+      { headers }
+    );
+    if (res.ok) {
+      const recent = ((await res.json()).workflow_runs || []).filter(
+        (r) => Date.parse(r.created_at) >= since
+      );
+      silver = await Promise.all(
+        recent.map(async (r) => ({
+          name: r.display_title || r.name,
+          status: r.status,
+          conclusion: r.conclusion,
+          url: r.html_url,
+          createdAt: r.created_at,
+          jobs: await jobsOf(r),
+        }))
+      );
+    }
+  } catch {
+    // Silver repo unreachable — report bronze only
+  }
+
+  return { bronzeRepo: REPO, silverRepo: SILVER_REPO, bronze, silver };
 }
