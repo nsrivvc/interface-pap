@@ -121,7 +121,7 @@ export function workflowStageSections(wf) {
       icon: STAGE_ICONS[stage.key],
       tables:
         stage.key === 2
-          ? wf.sources.map((k) => `raw_${k}`)
+          ? wf.sources.map((k) => `bronze_${k}`)
           : stage.key === 3
             ? wf.sources.flatMap((k) => STAGE3_SOURCE_TABLES[k])
             : stage.key === 4

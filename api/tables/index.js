@@ -6,19 +6,19 @@ export const STAGE_TABLES = [
   {
     stage: 'Stage 1 — API to Raw',
     tables: [
-      { name: 'raw_firm', label: 'Firm Raw Table' },
-      { name: 'raw_interruptible', label: 'Interruptible Raw Table' },
-      { name: 'raw_awards', label: 'Awards Raw Table' },
-      { name: 'raw_index', label: 'Index of Customers Raw Table' },
+      { name: 'raw_firm', label: 'Firm JSON' },
+      { name: 'raw_interruptible', label: 'Interruptible JSON' },
+      { name: 'raw_awards', label: 'Awards JSON' },
+      { name: 'raw_index', label: 'Index of Customers JSON' },
     ],
   },
   {
     stage: 'Stage 2 — JSON-Bronze',
     tables: [
-      { name: 'raw_firm', label: 'Firm Raw Table' },
-      { name: 'raw_interruptible', label: 'Interruptible Raw Table' },
-      { name: 'raw_awards', label: 'Awards Raw Table' },
-      { name: 'raw_index', label: 'Index of Customers Raw Table' },
+      { name: 'bronze_firm', label: 'Firm Raw Table' },
+      { name: 'bronze_interruptible', label: 'Interruptible Raw Table' },
+      { name: 'bronze_awards', label: 'Awards Raw Table' },
+      { name: 'bronze_index', label: 'Index of Customers Raw Table' },
     ],
   },
   {

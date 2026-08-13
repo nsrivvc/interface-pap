@@ -60,19 +60,19 @@ const STAGE_TABLES = [
   {
     stage: 'Stage 1 — API to Raw',
     tables: [
-      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
-      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
-      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
-      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
+      { name: 'raw_firm', label: 'Firm JSON', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
+      { name: 'raw_interruptible', label: 'Interruptible JSON', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
+      { name: 'raw_awards', label: 'Awards JSON', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
+      { name: 'raw_index', label: 'Index of Customers JSON', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
     ],
   },
   {
     stage: 'Stage 2 — JSON-Bronze',
     tables: [
-      { name: 'raw_firm', label: 'Firm Raw Table', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
-      { name: 'raw_interruptible', label: 'Interruptible Raw Table', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
-      { name: 'raw_awards', label: 'Awards Raw Table', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
-      { name: 'raw_index', label: 'Index of Customers Raw Table', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
+      { name: 'bronze_firm', label: 'Firm Raw Table', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
+      { name: 'bronze_interruptible', label: 'Interruptible Raw Table', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
+      { name: 'bronze_awards', label: 'Awards Raw Table', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
+      { name: 'bronze_index', label: 'Index of Customers Raw Table', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
     ],
   },
   // Stage 3-5 firm tables read the real Silver tables the bronze_to_silver

@@ -108,10 +108,10 @@ const STAGE1_GROUPS = [
 ];
 
 const STAGE2_GROUPS = [
-  { label: 'Firm', test: (n) => n === 'raw_firm' },
-  { label: 'Interruptible', test: (n) => n === 'raw_interruptible' },
-  { label: 'Awards', test: (n) => n === 'raw_awards' },
-  { label: 'IOC', test: (n) => n === 'raw_index' },
+  { label: 'Firm', test: (n) => n === 'bronze_firm' },
+  { label: 'Interruptible', test: (n) => n === 'bronze_interruptible' },
+  { label: 'Awards', test: (n) => n === 'bronze_awards' },
+  { label: 'IOC', test: (n) => n === 'bronze_index' },
 ];
 
 // IOC stops after Stage 2, so Stages 3-5 only group the other three sources.
