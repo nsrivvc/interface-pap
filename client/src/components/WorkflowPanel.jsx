@@ -100,6 +100,21 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
   const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
+  const [draftPipelines, setDraftPipelines] = useState([]);
+
+  // Extra pipelines attached at setup time. Placeholder fields for now —
+  // what a pipeline actually points at will be wired up later.
+  const addDraftPipeline = () =>
+    setDraftPipelines((ps) => [
+      ...ps,
+      { id: Date.now(), name: '', stage: 3, target: '', notes: '' },
+    ]);
+
+  const updateDraftPipeline = (id, patch) =>
+    setDraftPipelines((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+
+  const removeDraftPipeline = (id) =>
+    setDraftPipelines((ps) => ps.filter((p) => p.id !== id));
 
   // Run state:
   // { id, trigger, batchId, sourceStates, stageStates, github, githubRuns,
@@ -146,6 +161,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setDraftSources(ALL_SOURCE_KEYS);
     setDraftTime('');
     setDraftTz(LOCAL_TZ);
+    setDraftPipelines([]);
   };
 
   const saveWorkflow = () => {
@@ -154,8 +170,13 @@ export default function WorkflowPanel({ onPipelineRan }) {
     // Keep sources in pipeline order regardless of click order
     const sources = ALL_SOURCE_KEYS.filter((k) => draftSources.includes(k));
     const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
+    // Drop pipeline rows the user added but left entirely blank
+    const pipelines = draftPipelines.filter((p) => p.name.trim() || p.target.trim());
     // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5
-    const next = [...workflows, { id: Date.now(), name, stageCount: STAGE_DEFS.length, sources, schedule }];
+    const next = [
+      ...workflows,
+      { id: Date.now(), name, stageCount: STAGE_DEFS.length, sources, schedule, pipelines },
+    ];
     setWorkflows(next);
     saveWorkflows(next);
     resetForm();
@@ -530,8 +551,71 @@ export default function WorkflowPanel({ onPipelineRan }) {
             />
           </div>
 
+          {/* Additional pipelines — placeholder fields, parameters wired up later */}
+          <div className="wf-sources" style={{ marginTop: 0, borderLeftColor: 'var(--navy)' }}>
+            <div className="wf-sources-head">
+              <strong>Add a Pipeline</strong>
+              <span className="muted">
+                attach additional pipelines to this workflow — what they run will be
+                configured later
+              </span>
+            </div>
+            {draftPipelines.length === 0 && (
+              <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
+                No pipelines added yet.
+              </p>
+            )}
+            {draftPipelines.map((p) => (
+              <div key={p.id} className="wf-pipeline-row">
+                <input
+                  type="text"
+                  placeholder="Pipeline name"
+                  value={p.name}
+                  onChange={(e) => updateDraftPipeline(p.id, { name: e.target.value })}
+                />
+                <select
+                  value={p.stage}
+                  onChange={(e) => updateDraftPipeline(p.id, { stage: Number(e.target.value) })}
+                  title="The stage this pipeline runs at"
+                >
+                  <option value={1}>Stage 1 — API to Raw</option>
+                  {STAGE_DEFS.map((stage) => (
+                    <option key={stage.key} value={stage.key}>
+                      {stage.label} — {stage.desc}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  className="wf-pipeline-target"
+                  placeholder="Target (workflow file, endpoint, script…)"
+                  value={p.target}
+                  onChange={(e) => updateDraftPipeline(p.id, { target: e.target.value })}
+                />
+                <input
+                  type="text"
+                  className="wf-pipeline-notes"
+                  placeholder="Notes (optional)"
+                  value={p.notes}
+                  onChange={(e) => updateDraftPipeline(p.id, { notes: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  title="Remove this pipeline"
+                  onClick={() => removeDraftPipeline(p.id)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button type="button" className="btn btn-outline" onClick={addDraftPipeline}>
+              + Add Pipeline
+            </button>
+          </div>
+
           {/* Source pipelines to retrieve — the only switches on the form */}
-          <div className="wf-sources" style={{ marginTop: 0 }}>
+          <div className="wf-sources" style={{ marginTop: 16 }}>
             <div className="wf-sources-head">
               <strong>Sources</strong>
               <span className="muted">toggle the source pipelines this workflow should pull</span>
