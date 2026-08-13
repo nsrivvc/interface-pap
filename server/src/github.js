@@ -147,3 +147,66 @@ export async function pipelineRunStatus(files, sinceIso) {
 
   return { bronzeRepo: REPO, silverRepo: SILVER_REPO, bronze, silver };
 }
+
+/**
+ * Cancel the in-flight GitHub Actions runs of a dispatch: any not-yet-completed
+ * ingestion run for the dispatched files (created since `sinceIso`), plus any
+ * not-yet-completed Silver run the ingestion triggered.
+ */
+export async function cancelPipelineRuns(files, sinceIso) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error('GITHUB_TOKEN is not set.');
+  const wanted = (files || []).filter((f) => KNOWN_WORKFLOWS.has(f));
+  if (!wanted.length) throw new Error('No known workflow files requested.');
+  const since = sinceIso ? Date.parse(sinceIso) : 0;
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'User-Agent': 'interface-pap',
+  };
+
+  let cancelled = 0;
+  const cancel = async (repo, run) => {
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/actions/runs/${run.id}/cancel`,
+      { method: 'POST', headers }
+    );
+    if (res.status === 202) cancelled += 1;
+  };
+
+  for (const file of wanted) {
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${REPO}/actions/workflows/${encodeURIComponent(file)}/runs?per_page=1`,
+        { headers }
+      );
+      if (!res.ok) continue;
+      const run = (await res.json()).workflow_runs?.[0];
+      if (run && Date.parse(run.created_at) >= since && run.status !== 'completed') {
+        await cancel(REPO, run);
+      }
+    } catch {
+      // unreachable — skip this file
+    }
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${SILVER_REPO}/actions/runs?event=repository_dispatch&per_page=10`,
+      { headers }
+    );
+    if (res.ok) {
+      for (const r of (await res.json()).workflow_runs || []) {
+        if (Date.parse(r.created_at) >= since && r.status !== 'completed') {
+          await cancel(SILVER_REPO, r);
+        }
+      }
+    }
+  } catch {
+    // Silver repo unreachable — ingestion cancellation already attempted
+  }
+
+  return { cancelled };
+}

@@ -7,7 +7,7 @@ import { signToken, requireAuth } from './auth.js';
 import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
-import { triggerStage12, pipelineRunStatus } from './github.js';
+import { triggerStage12, pipelineRunStatus, cancelPipelineRuns } from './github.js';
 
 const app = express();
 app.use(cors());
@@ -189,6 +189,11 @@ app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => 
 app.get('/api/pipeline/run-status', requireAuth, wrap(async (req, res) => {
   const files = String(req.query.files || '').split(',').filter(Boolean);
   res.json(await pipelineRunStatus(files, req.query.since));
+}));
+
+// Cancel the in-flight GitHub Actions runs of a dispatch ({ files, since })
+app.post('/api/pipeline/cancel-run', requireAuth, wrap(async (req, res) => {
+  res.json(await cancelPipelineRuns(req.body?.files, req.body?.since));
 }));
 
 // ---------- Workflows ----------

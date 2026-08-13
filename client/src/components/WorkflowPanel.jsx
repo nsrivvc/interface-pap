@@ -252,11 +252,31 @@ export default function WorkflowPanel({ onPipelineRan }) {
     cancelEdit();
   };
 
+  // Stop tracking the active run and ask the server to cancel the in-flight
+  // GitHub Actions runs it dispatched (best effort — the card clears either way).
+  const cancelRun = (recordOnId = null) => {
+    const cur = run;
+    localStorage.removeItem(ACTIVE_RUN_KEY);
+    setRun(null);
+    if (recordOnId != null) {
+      recordLastRun(recordOnId, { at: Date.now(), status: 'cancelled', trigger: cur?.trigger || 'manual' });
+    }
+    const files = cur?.github?.dispatched;
+    if (files?.length) {
+      api('/api/pipeline/cancel-run', {
+        method: 'POST',
+        body: { files, since: new Date(cur.startedAt - 60000).toISOString() },
+      }).catch(() => {
+        // server unreachable — the GitHub runs will just finish on their own
+      });
+    }
+  };
+
   const removeWorkflow = (id) => {
+    if (run?.id === id) cancelRun();
     const next = workflows.filter((w) => w.id !== id);
     setWorkflows(next);
     saveWorkflows(next);
-    if (run?.id === id) setRun(null);
   };
 
   // Remember the last run on the workflow itself so the Table Viewer can
