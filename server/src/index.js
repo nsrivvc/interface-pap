@@ -7,7 +7,7 @@ import { signToken, requireAuth } from './auth.js';
 import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
-import { triggerStage12, pipelineRunStatus, cancelPipelineRuns } from './github.js';
+import { triggerPipeline, triggerIngest, pipelineRunStatus, cancelPipelineRuns } from './github.js';
 
 const app = express();
 app.use(cors());
@@ -179,13 +179,19 @@ app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
   res.json(await runStage(n, req.body?.batchId));
 }));
 
-// Dispatch the Stage 1/2 GitHub Actions ingestion workflows for the selected sources
+// Dispatch each selected source's end-to-end pipeline workflow (stages 1-5
+// in one run per feed) on the STAGE_3_4_5 repo. Route path kept for the client.
 app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => {
-  res.json(await triggerStage12(req.body?.sources));
+  res.json(await triggerPipeline(req.body?.sources));
 }));
 
-// Live status of a dispatch: ingestion runs + the Silver runs they triggered
-// (?files=a.yml,b.yml&since=ISO)
+// Dispatch one source's ingest-only (stage 1-2) workflow — Manual Workflow panel
+app.post('/api/pipeline/trigger-ingest', requireAuth, wrap(async (req, res) => {
+  res.json(await triggerIngest(req.body?.source));
+}));
+
+// Live status of a dispatch (?files=a.yml,b.yml&since=ISO): one run per file,
+// with its jobs — stages 3-5 are jobs inside each feed's run now.
 app.get('/api/pipeline/run-status', requireAuth, wrap(async (req, res) => {
   const files = String(req.query.files || '').split(',').filter(Boolean);
   res.json(await pipelineRunStatus(files, req.query.since));

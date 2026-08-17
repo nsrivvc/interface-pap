@@ -14,9 +14,14 @@ import { requireAuth } from './auth.js';
 // repo_root/server/src -> the Codebases directory that also holds pipeline-codebases
 const CODEBASES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
+// The ingestion project is a subfolder of the single pipeline repo now
+// (STAGE_3_4_5, local folder still named bronze_to_silver_conversion)
 const STAGE2_PARQUET_DIR =
   process.env.PARQUET_STAGE2_DIR ||
-  path.join(CODEBASES_DIR, 'pipeline-codebases', 'json--bronze--postgres', 'parquet_output');
+  path.join(
+    CODEBASES_DIR, 'pipeline-codebases', 'bronze_to_silver_conversion',
+    'src', 'transformations', 'stage_1_2(ingestion)', 'parquet_output'
+  );
 
 const STAGE345_PARQUET_DIR =
   process.env.PARQUET_STAGE345_DIR ||

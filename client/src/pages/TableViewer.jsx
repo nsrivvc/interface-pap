@@ -183,7 +183,12 @@ function WorkflowTables({ wf, tableIndex }) {
         <span className="tv-run-dot" />
         {last ? (
           <>
-            Last run {last.status === 'success' ? 'completed' : 'failed'}{' '}
+            Last run{' '}
+            {last.status === 'success'
+              ? 'completed'
+              : last.status === 'cancelled'
+                ? 'cancelled'
+                : 'failed'}{' '}
             {new Date(last.at).toLocaleString()}
             {last.batchId && <span className="tv-run-batch">batch {last.batchId}</span>}
           </>
