@@ -1,43 +1,46 @@
-// Triggers and tracks the pipeline workflows in the single nsrivvc/STAGE_3_4_5
-// repo, which now holds ALL transformation logic (stages 1-5).
+// Triggers and tracks the pipeline workflows for the ACTIVE source API.
+//
+// Which API that is, what its feeds are called and which workflow file runs
+// each one all come from server/src/providers/ — nothing here is specific to
+// NatGasHub. Point PIPELINE_PROVIDER at a different file and this module
+// dispatches that API's workflows instead.
 //
 // Trigger model (see the Pipeline Workflow Runbook):
-//   * firm / interruptible / awards -> one dispatch of <feed>(stage3_4_5).yml
-//     runs the WHOLE chain for that feed: ingest (stage 1-2) -> stage 3 ->
-//     stage 4 -> stage 5 core/locations/rates -> the three cross-feed finals,
-//     all as jobs INSIDE that single run.
-//   * index (IOC) has no stages 3-5, so its end-to-end is bronze_ingest_ioc.yml.
-//   * The Manual Workflow panel dispatches the ingest-only bronze_ingest_*.yml.
+//   * A feed's `workflows.pipeline` runs the WHOLE chain for that feed:
+//     ingest (stage 1-2) -> stage 3 -> stage 4 -> stage 5 core/locations/rates
+//     -> the three cross-feed finals, all as jobs INSIDE that single run.
+//   * A feed with no stages 3-5 (Index of Customers) points `workflows.pipeline`
+//     at its ingest file, so its end-to-end is just the ingest.
+//   * The Manual Workflow panel dispatches `workflows.ingest` (stage 1-2 only).
 // The old two-repo repository_dispatch handoff is gone — prefer
 // workflow_dispatch everywhere.
+import { provider, FEED_KEYS, feed } from './providers/index.js';
+
+// Env still wins, so a fork or a test branch needs no code change.
 const REPO =
   process.env.PIPELINE_GITHUB_REPO ||
   process.env.STAGE12_GITHUB_REPO ||
-  'nsrivvc/STAGE_3_4_5';
-const REF = process.env.PIPELINE_GITHUB_REF || process.env.STAGE12_GITHUB_REF || 'main';
+  provider.repo?.slug;
+const REF =
+  process.env.PIPELINE_GITHUB_REF || process.env.STAGE12_GITHUB_REF || provider.repo?.ref || 'main';
 
-// End-to-end workflow per feed (one dispatch = every stage for that feed)
-const PIPELINE_WORKFLOWS = {
-  firm: 'firm(stage3_4_5).yml',
-  interruptible: 'interruptible(stage3_4_5).yml',
-  awards: 'awards(stage3_4_5).yml',
-  index: 'bronze_ingest_ioc.yml', // IOC stops after stage 2
-};
+/** The workflow file for one feed, or a clear error if this API can't dispatch. */
+function workflowFile(key, kind) {
+  const { workflows, label } = feed(key);
+  if (!workflows) {
+    throw new Error(
+      `${provider.label} has no GitHub workflows — "${label}" cannot be dispatched. ` +
+        'Set PIPELINE_PROVIDER to an API that defines them.'
+    );
+  }
+  return workflows[kind];
+}
 
-// Ingest-only workflows (Manual Workflow panel, stage 1-2 only)
-const INGEST_WORKFLOWS = {
-  firm: 'bronze_ingest_firm.yml',
-  interruptible: 'bronze_ingest_interruptibles.yml',
-  awards: 'bronze_ingest_awards.yml',
-  index: 'bronze_ingest_ioc.yml',
-};
-
-const ALL_SOURCES = Object.keys(PIPELINE_WORKFLOWS);
-
+// Every workflow file this provider knows about, used to sanity-check the
+// files a status/cancel request asks for.
 const KNOWN_WORKFLOWS = new Set([
-  'bronze_ingest.yml',
-  ...Object.values(INGEST_WORKFLOWS),
-  ...Object.values(PIPELINE_WORKFLOWS),
+  'bronze_ingest.yml', // legacy all-feeds ingest, still dispatchable by hand
+  ...FEED_KEYS.flatMap((k) => Object.values(provider.feeds[k].workflows || {})),
 ]);
 
 // encodeURIComponent leaves ( ) alone, but the GitHub API wants them encoded
@@ -55,6 +58,12 @@ function ghHeaders(token) {
 }
 
 function requireToken() {
+  if (!REPO) {
+    throw new Error(
+      `${provider.label} has no pipeline repo configured — set PIPELINE_GITHUB_REPO in ` +
+        'server/.env, or give the provider a `repo` in server/src/providers/.'
+    );
+  }
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
     throw new Error(
@@ -83,10 +92,10 @@ async function dispatch(file, token) {
 /** Dispatch each selected source's end-to-end pipeline workflow. */
 export async function triggerPipeline(sources) {
   const token = requireToken();
-  const selected = ALL_SOURCES.filter((k) => (sources || []).includes(k));
+  const selected = FEED_KEYS.filter((k) => (sources || []).includes(k));
   if (!selected.length) throw new Error('No valid sources selected.');
 
-  const files = selected.map((k) => PIPELINE_WORKFLOWS[k]);
+  const files = selected.map((k) => workflowFile(k, 'pipeline'));
   for (const file of files) await dispatch(file, token);
   return { repo: REPO, ref: REF, dispatched: files };
 }
@@ -94,8 +103,7 @@ export async function triggerPipeline(sources) {
 /** Dispatch one source's ingest-only (stage 1-2) workflow. */
 export async function triggerIngest(source) {
   const token = requireToken();
-  const file = INGEST_WORKFLOWS[source];
-  if (!file) throw new Error(`Unknown source "${source}".`);
+  const file = workflowFile(source, 'ingest');
   await dispatch(file, token);
   return { repo: REPO, ref: REF, dispatched: [file] };
 }

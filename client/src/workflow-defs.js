@@ -1,4 +1,6 @@
-// Shared workflow definitions: which NGH sources a workflow can retrieve
+import { FEEDS } from './providers/index.js';
+
+// Shared workflow definitions: which sources a workflow can retrieve
 // (Stage 1) and which transformation stages it can run (Stages 2-5).
 // Used by the dashboard's WorkflowPanel and the Table Viewer.
 
@@ -13,19 +15,19 @@ export const STAGE_DEFS = [
   { key: 5, apiStage: 4, label: 'Stage 5', desc: 'Master Capacity' },
 ];
 
-// NGH API pipelines the workflow retrieves before its stages run
-export const SOURCE_DEFS = [
-  { key: 'firm', label: 'Firm', desc: 'NGH-gTran-Firms-API-Pipeline' },
-  { key: 'interruptible', label: 'Interruptible', desc: 'NGH-gTran-Interruptibles-API-Pipeline' },
-  { key: 'awards', label: 'Awards', desc: 'NGH-gExchange-Awards-API-Pipeline' },
-  { key: 'index', label: 'Index of Customers', desc: 'NGH-IndexOfCustomers-API-Pipeline' },
-];
+// Source pipelines the workflow retrieves before its stages run. These come
+// from the active source API in providers/ — nothing here assumes NatGasHub.
+export const SOURCE_DEFS = FEEDS.map((f) => ({
+  key: f.key,
+  label: f.label,
+  desc: f.sourcePipeline,
+}));
 
 export const ALL_SOURCE_KEYS = SOURCE_DEFS.map((s) => s.key);
 export const sourceLabel = (key) => SOURCE_DEFS.find((s) => s.key === key)?.label || key;
 
 // Compact source names for badges/chips on workflow cards
-const SOURCE_SHORT = { firm: 'Firm', interruptible: 'IT', awards: 'Awards', index: 'IOC' };
+const SOURCE_SHORT = Object.fromEntries(FEEDS.map((f) => [f.key, f.shortLabel]));
 export const shortSourceLabel = (key) => SOURCE_SHORT[key] || key;
 
 export const STORAGE_KEY = 'pap_workflows_v2';
@@ -40,6 +42,14 @@ export function loadWorkflows() {
         ...w,
         stageCount: Math.min(w.stageCount, STAGE_DEFS.length),
         sources: sources.length ? sources : ALL_SOURCE_KEYS,
+        // Shippers used to carry name/duns/contract/notes; they're just the
+        // K-holder pair now, so older saves are folded onto the new shape.
+        shippers: (w.shippers || []).map((sh) => ({
+          id: sh.id,
+          kHolderName: sh.kHolderName ?? sh.name ?? '',
+          kHolderNumber: sh.kHolderNumber ?? sh.duns ?? '',
+          action: sh.action === 'remove' ? 'remove' : 'add',
+        })),
       };
     });
   } catch {
@@ -51,40 +61,31 @@ export function saveWorkflows(workflows) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(workflows));
 }
 
-// Stage 3 standardized tables per retrieved source — each source has
-// Locations, Core and Rates tables. IOC (index) stops after Stage 2, so it
-// contributes no tables from here on.
-export const STAGE3_SOURCE_TABLES = {
-  firm: ['firm_locations_standardized', 'firm_core_standardized', 'firm_rates_standardized'],
-  interruptible: [
-    'interruptible_locations_standardized',
-    'interruptible_core_standardized',
-    'interruptible_rates_standardized',
-  ],
-  awards: ['awards_locations_standardized', 'awards_core_standardized', 'awards_rates_standardized'],
-  index: [],
-};
+// Per-source table names at each stage. Every provider follows the same
+// naming pattern, so these are derived from the feed key; a feed whose
+// pipeline stops early (IOC ends at Stage 2) contributes nothing past it.
+const tablesForStage = (stage, build) =>
+  Object.fromEntries(FEEDS.map((f) => [f.key, f.lastStage >= stage ? build(f.key) : []]));
 
-// Stage 4 rec-del paired tables per retrieved source
-export const STAGE4_SOURCE_TABLES = {
-  firm: ['firm_locations_standardized_transformed'],
-  interruptible: ['interruptible_locations_standardized_transformed'],
-  awards: ['awards_locations_standardized_transformed'],
-  index: [],
-};
+// Stage 3: Locations, Core and Rates standardized per source
+export const STAGE3_SOURCE_TABLES = tablesForStage(3, (k) => [
+  `${k}_locations_standardized`,
+  `${k}_core_standardized`,
+  `${k}_rates_standardized`,
+]);
 
-// Stage 5 master capacity tables per retrieved source, plus the Final
-// tables every workflow that reaches Stage 5 gets.
-export const STAGE5_SOURCE_TABLES = {
-  firm: ['firm_core_master_capacity', 'firm_locations_master_capacity', 'firm_rates_master_capacity'],
-  interruptible: [
-    'interruptible_core_master_capacity',
-    'interruptible_locations_master_capacity',
-    'interruptible_rates_master_capacity',
-  ],
-  awards: ['awards_core_master_capacity', 'awards_locations_master_capacity', 'awards_rates_master_capacity'],
-  index: [],
-};
+// Stage 4: rec-del paired tables per source
+export const STAGE4_SOURCE_TABLES = tablesForStage(4, (k) => [
+  `${k}_locations_standardized_transformed`,
+]);
+
+// Stage 5: master capacity tables per source, plus the Final tables below
+export const STAGE5_SOURCE_TABLES = tablesForStage(5, (k) => [
+  `${k}_core_master_capacity`,
+  `${k}_locations_master_capacity`,
+  `${k}_rates_master_capacity`,
+]);
+
 const STAGE5_FINAL_TABLES = [
   'final_core_master_capacity',
   'final_locations_master_capacity',
@@ -99,7 +100,12 @@ const STAGE_TABLES = {
   5: [...ALL_SOURCE_KEYS.flatMap((k) => STAGE5_SOURCE_TABLES[k]), ...STAGE5_FINAL_TABLES],
 };
 
-const STAGE_ICONS = { 1: '{ }', 2: '✓', 3: '≡', 4: '+', 5: 'Σ' };
+const STAGE_ICONS = { 1: '{ }', 2: '✓', 3: '≡', 4: '+', 5: 'Σ', additional: '⊞' };
+
+// Reference tables that sit outside the numbered stages. Maintained by hand in
+// Neon rather than written by a pipeline run, so every workflow shows the same
+// set. Names must match the `name` fields the server exposes at /api/tables.
+export const ADDITIONAL_TABLES = ['shipping', 'pipeline_attributes'];
 
 /**
  * The stage sections of a workflow for the Table Viewer:
@@ -134,5 +140,11 @@ export function workflowStageSections(wf) {
                 : STAGE_TABLES[stage.key],
     });
   }
+  sections.push({
+    key: 'additional',
+    title: 'Additional Tables',
+    icon: STAGE_ICONS.additional,
+    tables: ADDITIONAL_TABLES,
+  });
   return sections;
 }

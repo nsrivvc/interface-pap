@@ -89,3 +89,21 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
 INSERT INTO workflows (name, description)
 SELECT 'Full Pipeline', 'Retrieve source then run Stages 1-5 end to end'
 WHERE NOT EXISTS (SELECT 1 FROM workflows WHERE name = 'Full Pipeline');
+
+-- ---------------------------------------------------------------------------
+-- Additional (reference) tables
+--
+-- Not written by any pipeline stage — maintained by hand and surfaced in the
+-- Table Viewer's "Additional Tables" section. The interface reads them as
+-- empty until they exist, so creating them is optional.
+-- Column names are quoted to keep their mixed case in Postgres.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.shipping (
+  "KHolderName" text,
+  "KHolderNo"   text
+);
+
+-- Columns TBD — add them when the attribute set is settled.
+CREATE TABLE IF NOT EXISTS public.pipeline_attributes (
+  id serial PRIMARY KEY
+);

@@ -50,9 +50,34 @@ Value Creed–styled data pipeline interface: React (Vite) frontend + Express AP
 ```
 server/           Express API
   schema.sql      All Neon tables (users, source, stage1-5, workflows, runs)
+  src/providers/  One file per source API — see "Connecting a different API"
   src/pipeline.js Dummy source retrieval + the 5 stage transformations
   src/scheduler.js Interval-based workflow scheduler
 client/           React (Vite) app, Value Creed styling
+  src/providers/  UI-side feed labels for each source API
   src/pages/      Login, Register, Dashboard, TableView
   src/components/ Header, WorkflowPanel
 ```
+
+## Connecting a different API
+
+The upstream API is **not** assumed to be NatGasHub. Each API gets one file on
+each side, and a registry picks the active one:
+
+```
+server/src/providers/natgashub.js   feeds, workflow files, physical tables
+server/src/providers/local.js       offline mock — no API, no dispatch
+client/src/providers/natgashub.js   feed labels + the workflow file per feed
+```
+
+Nothing outside those files names a feed, a bronze/silver table, or a workflow
+`.yml`. To add an API:
+
+1. Copy `natgashub.js` on **both** sides to `<your-api>.js` and fill it in.
+2. Register it in the `PROVIDERS` map in each `providers/index.js`.
+3. Set `PIPELINE_PROVIDER=<your-api>` (server/.env) and
+   `VITE_PIPELINE_PROVIDER=<your-api>` (client/.env).
+
+Keep the feed **keys** identical on both sides — they're what `/api/pipeline/*`
+is called with. `GET /api/provider` reports which API the server is using.
+Setting an unregistered name fails at startup with the list of valid ones.

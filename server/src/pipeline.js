@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sql, hasDb } from './db.js';
+import { provider, FEED_KEYS } from './providers/index.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -21,13 +22,11 @@ const REGIONS = {
 
 const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
-// NGH API pipelines a workflow can retrieve from
-export const SOURCES = {
-  firm: 'NGH-gTran-Firms-API-Pipeline',
-  interruptible: 'NGH-gTran-Interruptibles-API-Pipeline',
-  awards: 'NGH-gExchange-Awards-API-Pipeline',
-  index: 'NGH-IndexOfCustomers-API-Pipeline',
-};
+// Source pipelines a workflow can retrieve from. Comes from the active source
+// API in providers/ — swap PIPELINE_PROVIDER and these change with it.
+export const SOURCES = Object.fromEntries(
+  FEED_KEYS.map((key) => [key, provider.feeds[key].sourcePipeline])
+);
 
 /**
  * Dummy "retrieve from source system": generates a batch of raw trade JSON

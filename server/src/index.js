@@ -8,6 +8,7 @@ import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
 import { triggerPipeline, triggerIngest, pipelineRunStatus, cancelPipelineRuns } from './github.js';
+import { provider, FEED_KEYS, feedSummaries } from './providers/index.js';
 
 const app = express();
 app.use(cors());
@@ -51,78 +52,90 @@ app.post('/api/auth/login', wrap(async (req, res) => {
 app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
 // ---------- Tables ----------
-// Each pipeline stage owns a set of tables. `backing` is the physical
-// Postgres table the virtual table reads from until the real per-source
-// tables exist in Neon.
+// Every table the viewer exposes, derived from the ACTIVE source API in
+// server/src/providers/. The virtual names (raw_firm, firm_core_standardized…)
+// are what the UI and downloads address; `backing` is the physical table that
+// API's pipeline actually writes. Changing API means editing a provider file,
+// not this list. A feed that stops before a stage contributes nothing to it.
+const FEEDS = FEED_KEYS.map((key) => ({ key, ...provider.feeds[key] }));
+const CAP = { locations: 'Locations', core: 'Core', rates: 'Rates' };
+
+// One virtual table, or undefined when this feed has no table at that stage.
+const vt = (spec, name, label) =>
+  spec && { name, label, backing: spec.table, orderBy: spec.orderBy };
+
+const grains = (order, build) => FEEDS.flatMap((f) => order.map((g) => build(f, g)));
+
 const STAGE_TABLES = [
-  // The raw tables read the real Bronze tables the ingestion workflows load
-  // into Neon (bronze schema, one table per source feed).
   {
     stage: 'Stage 1 — API to Raw',
-    tables: [
-      { name: 'raw_firm', label: 'Firm JSON', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
-      { name: 'raw_interruptible', label: 'Interruptible JSON', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
-      { name: 'raw_awards', label: 'Awards JSON', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
-      { name: 'raw_index', label: 'Index of Customers JSON', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
-    ],
+    tables: FEEDS.map((f) => vt(f.tables.bronze, `raw_${f.key}`, `${f.label} JSON`)).filter(Boolean),
   },
   {
     stage: 'Stage 2 — JSON-Bronze',
-    tables: [
-      { name: 'bronze_firm', label: 'Firm Raw Table', backing: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
-      { name: 'bronze_interruptible', label: 'Interruptible Raw Table', backing: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
-      { name: 'bronze_awards', label: 'Awards Raw Table', backing: 'bronze.gawd', orderBy: 'bronze_row_id' },
-      { name: 'bronze_index', label: 'Index of Customers Raw Table', backing: 'bronze.gindex', orderBy: 'bronze_row_id' },
-    ],
+    tables: FEEDS.map((f) =>
+      vt(f.tables.bronze, `bronze_${f.key}`, `${f.label} Raw Table`)
+    ).filter(Boolean),
   },
-  // Stage 3-5 firm tables read the real Silver tables the bronze_to_silver
-  // pipeline writes in Neon. Interruptible/Awards silver tables don't exist
-  // yet — their backings are the expected future names, so they show 0 rows
-  // until those pipelines land.
   {
     stage: 'Stage 3 — Silver Staging',
-    tables: [
-      { name: 'firm_locations_standardized', label: 'Firm Locations — Standardized', backing: 'silver_staging.firm_locations', orderBy: '"index"' },
-      { name: 'firm_core_standardized', label: 'Firm Core — Standardized', backing: 'silver_staging.firm_core', orderBy: 'bronze_row_id' },
-      { name: 'firm_rates_standardized', label: 'Firm Rates — Standardized', backing: 'silver_staging.firm_rates', orderBy: 'bronze_row_id' },
-      { name: 'interruptible_locations_standardized', label: 'Interruptible Locations — Standardized', backing: 'silver_staging.interruptible_locations' },
-      { name: 'interruptible_core_standardized', label: 'Interruptible Core — Standardized', backing: 'silver_staging.interruptible_core' },
-      { name: 'interruptible_rates_standardized', label: 'Interruptible Rates — Standardized', backing: 'silver_staging.interruptible_rates' },
-      { name: 'awards_locations_standardized', label: 'Awards Locations — Standardized', backing: 'silver_staging.awards_locations' },
-      { name: 'awards_core_standardized', label: 'Awards Core — Standardized', backing: 'silver_staging.awards_core' },
-      { name: 'awards_rates_standardized', label: 'Awards Rates — Standardized', backing: 'silver_staging.awards_rates' },
-    ],
+    tables: grains(['locations', 'core', 'rates'], (f, g) =>
+      vt(
+        f.tables.silverStaging?.[g],
+        `${f.key}_${g}_standardized`,
+        `${f.label} ${CAP[g]} — Standardized`
+      )
+    ).filter(Boolean),
   },
   {
     stage: 'Stage 4 — Rec-Del Pairing',
-    tables: [
-      { name: 'firm_locations_standardized_transformed', label: 'Firm Locations — Standardized (Transformed)', backing: 'silver.firm_rec_del_pair', orderBy: 'rec_del_pair_id' },
-      { name: 'interruptible_locations_standardized_transformed', label: 'Interruptible Locations — Standardized (Transformed)', backing: 'silver.interruptible_rec_del_pair' },
-      { name: 'awards_locations_standardized_transformed', label: 'Awards Locations — Standardized (Transformed)', backing: 'silver.awards_rec_del_pair' },
-    ],
+    tables: FEEDS.map((f) =>
+      vt(
+        f.tables.recDel,
+        `${f.key}_locations_standardized_transformed`,
+        `${f.label} Locations — Standardized (Transformed)`
+      )
+    ).filter(Boolean),
   },
   {
     stage: 'Stage 5 — Master Capacity',
     tables: [
-      { name: 'firm_core_master_capacity', label: 'Firm Core — Master Capacity', backing: 'silver.firm_core_master_capacity', orderBy: 'firm_core_id' },
-      { name: 'firm_locations_master_capacity', label: 'Firm Locations — Master Capacity', backing: 'silver.firm_locations_master_capacity', orderBy: 'firm_locations_id' },
-      { name: 'firm_rates_master_capacity', label: 'Firm Rates — Master Capacity', backing: 'silver.firm_rates_master_capacity', orderBy: 'firm_rates_id' },
-      { name: 'interruptible_core_master_capacity', label: 'Interruptible Core — Master Capacity', backing: 'silver.interruptible_core_master_capacity' },
-      { name: 'interruptible_locations_master_capacity', label: 'Interruptible Locations — Master Capacity', backing: 'silver.interruptible_locations_master_capacity' },
-      { name: 'interruptible_rates_master_capacity', label: 'Interruptible Rates — Master Capacity', backing: 'silver.interruptible_rates_master_capacity' },
-      { name: 'awards_core_master_capacity', label: 'Awards Core — Master Capacity', backing: 'silver.awards_core_master_capacity' },
-      { name: 'awards_locations_master_capacity', label: 'Awards Locations — Master Capacity', backing: 'silver.awards_locations_master_capacity' },
-      { name: 'awards_rates_master_capacity', label: 'Awards Rates — Master Capacity', backing: 'silver.awards_rates_master_capacity' },
-      { name: 'final_core_master_capacity', label: 'Final Core — Master Capacity', backing: 'silver.final_core_master_capacity', orderBy: 'final_core_id' },
-      { name: 'final_locations_master_capacity', label: 'Final Locations — Master Capacity', backing: 'silver.final_locations_master_capacity', orderBy: 'final_locations_id' },
-      { name: 'final_rates_master_capacity', label: 'Final Rates — Master Capacity', backing: 'silver.final_rates_master_capacity', orderBy: 'final_rates_id' },
+      ...grains(['core', 'locations', 'rates'], (f, g) =>
+        vt(
+          f.tables.masterCapacity?.[g],
+          `${f.key}_${g}_master_capacity`,
+          `${f.label} ${CAP[g]} — Master Capacity`
+        )
+      ),
+      // Cross-feed finals belong to the provider, not to any one feed
+      ...['core', 'locations', 'rates'].map((g) =>
+        vt(provider.finalTables?.[g], `final_${g}_master_capacity`, `Final ${CAP[g]} — Master Capacity`)
+      ),
+    ].filter(Boolean),
+  },
+  // Reference tables kept alongside the pipeline rather than produced by it.
+  // The physical tables are created in Neon by hand; until they exist these
+  // read as empty instead of erroring. See server/schema.sql for the DDL.
+  {
+    stage: 'Additional Tables',
+    tables: [
+      {
+        name: 'shipping',
+        label: 'Shipping Table',
+        backing: 'public.shipping',
+        orderBy: '"KHolderNo"',
+      },
+      {
+        name: 'pipeline_attributes',
+        label: 'Pipeline Attribute Table',
+        backing: 'public.pipeline_attributes',
+      },
     ],
   },
+  // Operational tables — the same whichever API is upstream
   {
     stage: 'Logging',
-    tables: [
-      { name: 'workflow_runs', label: 'Workflow Run Logs', backing: 'workflow_runs' },
-    ],
+    tables: [{ name: 'workflow_runs', label: 'Workflow Run Logs', backing: 'workflow_runs' }],
   },
   {
     stage: 'Exceptions',
@@ -135,6 +148,18 @@ const STAGE_TABLES = [
 const TABLE_INDEX = Object.fromEntries(
   STAGE_TABLES.flatMap((s) => s.tables.map((t) => [t.name, t]))
 );
+
+// ---------- Source API ----------
+// Which upstream API this server is pulling from, and what it calls its feeds.
+app.get('/api/provider', requireAuth, (req, res) => {
+  res.json({
+    key: provider.key,
+    label: provider.label,
+    description: provider.description,
+    repo: provider.repo,
+    feeds: feedSummaries(),
+  });
+});
 
 app.get('/api/tables', requireAuth, wrap(async (req, res) => {
   const counts = {}; // backing table -> row count, queried once each
