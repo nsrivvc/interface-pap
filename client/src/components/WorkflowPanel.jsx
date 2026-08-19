@@ -100,6 +100,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
   const [draftPipelines, setDraftPipelines] = useState([]);
+  const [draftShippers, setDraftShippers] = useState([]);
 
   // Extra pipelines attached at setup time. Placeholder fields for now —
   // what a pipeline actually points at will be wired up later.
@@ -114,6 +115,20 @@ export default function WorkflowPanel({ onPipelineRan }) {
 
   const removeDraftPipeline = (id) =>
     setDraftPipelines((ps) => ps.filter((p) => p.id !== id));
+
+  // Shippers attached at setup time. Placeholder fields for now — how a
+  // shipper scopes the workflow's data will be wired up later.
+  const addDraftShipper = () =>
+    setDraftShippers((ss) => [
+      ...ss,
+      { id: Date.now(), name: '', duns: '', contract: '', notes: '' },
+    ]);
+
+  const updateDraftShipper = (id, patch) =>
+    setDraftShippers((ss) => ss.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)));
+
+  const removeDraftShipper = (id) =>
+    setDraftShippers((ss) => ss.filter((sh) => sh.id !== id));
 
   // Run state:
   // { id, trigger, batchId, sourceStates, stageStates, github, githubRuns,
@@ -160,6 +175,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setDraftTime('');
     setDraftTz(LOCAL_TZ);
     setDraftPipelines([]);
+    setDraftShippers([]);
   };
 
   const saveWorkflow = () => {
@@ -170,10 +186,20 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
     // Drop pipeline rows the user added but left entirely blank
     const pipelines = draftPipelines.filter((p) => p.name.trim() || p.target.trim());
+    // Same for shipper rows
+    const shippers = draftShippers.filter((sh) => sh.name.trim() || sh.duns.trim());
     // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5
     const next = [
       ...workflows,
-      { id: Date.now(), name, stageCount: STAGE_DEFS.length, sources, schedule, pipelines },
+      {
+        id: Date.now(),
+        name,
+        stageCount: STAGE_DEFS.length,
+        sources,
+        schedule,
+        pipelines,
+        shippers,
+      },
     ];
     setWorkflows(next);
     saveWorkflows(next);
@@ -198,6 +224,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
       time: wf.schedule?.time || '',
       tz: wf.schedule?.tz || LOCAL_TZ,
       pipelines: wf.pipelines || [],
+      shippers: wf.shippers || [],
     });
   };
 
@@ -217,6 +244,23 @@ export default function WorkflowPanel({ onPipelineRan }) {
 
   const removeEditPipeline = (id) =>
     setEditDraft((d) => ({ ...d, pipelines: d.pipelines.filter((p) => p.id !== id) }));
+
+  // Shippers attached to a workflow. Placeholder fields for now — how a
+  // shipper scopes the workflow's data will be wired up later.
+  const addEditShipper = () =>
+    setEditDraft((d) => ({
+      ...d,
+      shippers: [...d.shippers, { id: Date.now(), name: '', duns: '', contract: '', notes: '' }],
+    }));
+
+  const updateEditShipper = (id, patch) =>
+    setEditDraft((d) => ({
+      ...d,
+      shippers: d.shippers.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)),
+    }));
+
+  const removeEditShipper = (id) =>
+    setEditDraft((d) => ({ ...d, shippers: d.shippers.filter((sh) => sh.id !== id) }));
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -242,6 +286,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
             schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
             // Drop pipeline rows the user added but left entirely blank
             pipelines: editDraft.pipelines.filter((p) => p.name.trim() || p.target.trim()),
+            // Same for shipper rows
+            shippers: editDraft.shippers.filter((sh) => sh.name.trim() || sh.duns.trim()),
           }
         : w
     );
@@ -610,6 +656,64 @@ export default function WorkflowPanel({ onPipelineRan }) {
             </button>
           </div>
 
+          {/* Shippers — placeholder fields, scoping wired up later */}
+          <div className="wf-sources" style={{ marginTop: 16, borderLeftColor: 'var(--navy)' }}>
+            <div className="wf-sources-head">
+              <strong>Add a Shipper</strong>
+              <span className="muted">
+                attach shippers to this workflow — how they scope the data will be
+                configured later
+              </span>
+            </div>
+            {draftShippers.length === 0 && (
+              <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
+                No shippers added yet.
+              </p>
+            )}
+            {draftShippers.map((sh) => (
+              <div key={sh.id} className="wf-pipeline-row">
+                <input
+                  type="text"
+                  placeholder="Shipper name"
+                  value={sh.name}
+                  onChange={(e) => updateDraftShipper(sh.id, { name: e.target.value })}
+                />
+                <input
+                  type="text"
+                  className="wf-pipeline-notes"
+                  placeholder="DUNS"
+                  value={sh.duns}
+                  onChange={(e) => updateDraftShipper(sh.id, { duns: e.target.value })}
+                />
+                <input
+                  type="text"
+                  className="wf-pipeline-target"
+                  placeholder="Contract / rate schedule (optional)"
+                  value={sh.contract}
+                  onChange={(e) => updateDraftShipper(sh.id, { contract: e.target.value })}
+                />
+                <input
+                  type="text"
+                  className="wf-pipeline-notes"
+                  placeholder="Notes (optional)"
+                  value={sh.notes}
+                  onChange={(e) => updateDraftShipper(sh.id, { notes: e.target.value })}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  title="Remove this shipper"
+                  onClick={() => removeDraftShipper(sh.id)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button type="button" className="btn btn-outline" onClick={addDraftShipper}>
+              + Add Shipper
+            </button>
+          </div>
+
           {/* Source pipelines to retrieve — the only switches on the form */}
           <div className="wf-sources" style={{ marginTop: 16 }}>
             <div className="wf-sources-head">
@@ -809,6 +913,60 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   + Add Pipeline
                 </button>
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
+                  <strong>Shippers</strong>
+                  <span className="muted">
+                    attach shippers to this workflow — how they scope the data will be
+                    configured later
+                  </span>
+                </div>
+                {editDraft.shippers.length === 0 && (
+                  <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
+                    No shippers added yet.
+                  </p>
+                )}
+                {editDraft.shippers.map((sh) => (
+                  <div key={sh.id} className="wf-pipeline-row">
+                    <input
+                      type="text"
+                      placeholder="Shipper name"
+                      value={sh.name}
+                      onChange={(e) => updateEditShipper(sh.id, { name: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="wf-pipeline-notes"
+                      placeholder="DUNS"
+                      value={sh.duns}
+                      onChange={(e) => updateEditShipper(sh.id, { duns: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="wf-pipeline-target"
+                      placeholder="Contract / rate schedule (optional)"
+                      value={sh.contract}
+                      onChange={(e) => updateEditShipper(sh.id, { contract: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="wf-pipeline-notes"
+                      placeholder="Notes (optional)"
+                      value={sh.notes}
+                      onChange={(e) => updateEditShipper(sh.id, { notes: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      title="Remove this shipper"
+                      onClick={() => removeEditShipper(sh.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="btn btn-outline" onClick={addEditShipper}>
+                  + Add Shipper
+                </button>
+                <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
                   <strong>Trigger time</strong>
                   <span className="muted">runs daily at this time — leave empty for manual-only</span>
                 </div>
@@ -868,6 +1026,11 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   {wf.pipelines?.length > 0 && (
                     <span className="badge manual" style={{ marginLeft: 4 }}>
                       {wf.pipelines.length} pipeline{wf.pipelines.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {wf.shippers?.length > 0 && (
+                    <span className="badge manual" style={{ marginLeft: 4 }}>
+                      {wf.shippers.length} shipper{wf.shippers.length > 1 ? 's' : ''}
                     </span>
                   )}
                   {wf.schedule && (
