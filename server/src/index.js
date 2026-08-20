@@ -162,14 +162,24 @@ app.get('/api/provider', requireAuth, (req, res) => {
 });
 
 app.get('/api/tables', requireAuth, wrap(async (req, res) => {
-  const counts = {}; // backing table -> row count, queried once each
-  for (const backing of new Set(Object.values(TABLE_INDEX).map((t) => t.backing))) {
-    try {
-      const [{ count }] = await sql.query(`SELECT count(*)::int AS count FROM ${backing}`);
-      counts[backing] = count;
-    } catch {
-      counts[backing] = 0; // no database yet
+  // Row counts for every backing table in two round trips (which tables exist,
+  // then one combined count query) — the previous per-table count(*) loop cost
+  // a full HTTP round trip to Neon for each of the ~30 tables, sequentially.
+  const backings = [...new Set(Object.values(TABLE_INDEX).map((t) => t.backing))];
+  const counts = Object.fromEntries(backings.map((b) => [b, 0]));
+  try {
+    const existing = new Set(
+      (await sql`SELECT schemaname || '.' || tablename AS name FROM pg_tables`).map((r) => r.name)
+    );
+    const present = backings.filter((b) => existing.has(b.includes('.') ? b : `public.${b}`));
+    if (present.length) {
+      const union = present
+        .map((b, i) => `SELECT ${i} AS i, count(*)::int AS count FROM ${b}`)
+        .join(' UNION ALL ');
+      for (const row of await sql.query(union)) counts[present[row.i]] = row.count;
     }
+  } catch {
+    // no database yet — every table reads as empty
   }
   const stages = STAGE_TABLES.map((s) => ({
     stage: s.stage,
