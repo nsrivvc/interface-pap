@@ -16,6 +16,7 @@ export default function Header() {
           Contract Workflow Dashboard
         </NavLink>
         <NavLink to="/tables">Table Viewer</NavLink>
+        <NavLink to="/reports">Reports</NavLink>
       </nav>
       <div className="header-user">
         <span>

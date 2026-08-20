@@ -5,6 +5,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import TableViewer from './pages/TableViewer';
 import TableView from './pages/TableView';
+import Reports from './pages/Reports';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -40,6 +41,14 @@ export default function App() {
         element={
           <Protected>
             <TableView />
+          </Protected>
+        }
+      />
+      <Route
+        path="/reports"
+        element={
+          <Protected>
+            <Reports />
           </Protected>
         }
       />

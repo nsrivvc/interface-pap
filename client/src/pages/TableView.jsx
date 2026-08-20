@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
 import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
 import { api, apiDownload } from '../api';
 import Header from '../components/Header';
+import { buildGoldReport, describeFilterModel } from '../gold-report';
 
 const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'parquet'];
 
@@ -36,6 +37,31 @@ export default function TableView() {
   const [quickFilter, setQuickFilter] = useState('');
   const [downloading, setDownloading] = useState(null); // format while a download runs
   const [downloadError, setDownloadError] = useState('');
+  const gridApiRef = useRef(null);
+  const [gold, setGold] = useState(null); // { url, rowCount, at } once generated
+
+  // Build the gold-layer report from the grid's CURRENT filtered + sorted view
+  const generateGold = () => {
+    const gridApi = gridApiRef.current;
+    if (!gridApi || !data) return;
+    const rows = [];
+    gridApi.forEachNodeAfterFilterAndSort((node) => rows.push(node.data));
+    const html = buildGoldReport({
+      name,
+      label: data.label,
+      rows,
+      totalCount: data.rows.length,
+      filters: describeFilterModel(gridApi.getFilterModel(), quickFilter),
+    });
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    setGold({ url, rowCount: rows.length, at: new Date() });
+  };
+
+  // Revoke the previous report's blob URL when regenerated / table changed
+  useEffect(() => () => { if (gold?.url) URL.revokeObjectURL(gold.url); }, [gold]);
+
+  const downloadViewCsv = () =>
+    gridApiRef.current?.exportDataAsCsv({ fileName: `${name}_gold_view.csv` });
 
   const download = async (format) => {
     setDownloading(format);
@@ -53,6 +79,7 @@ export default function TableView() {
     setData(null);
     setError('');
     setQuickFilter('');
+    setGold(null);
     api(`/api/tables/${name}`)
       .then(setData)
       .catch((err) => setError(err.message));
@@ -144,7 +171,65 @@ export default function TableView() {
                 paginationPageSizeSelector={[25, 50, 100, 200]}
                 enableCellTextSelection
                 tooltipShowDelay={300}
+                onGridReady={(e) => { gridApiRef.current = e.api; }}
               />
+            </div>
+
+            {/* Gold layer: snapshot the current filtered view as a report */}
+            <div style={{ marginTop: 22, paddingBottom: 30 }}>
+              <button
+                className="btn"
+                onClick={generateGold}
+                style={{
+                  background: 'linear-gradient(120deg, #c99a2e, #e0b545)',
+                  border: 'none',
+                  color: '#1f2a44',
+                  fontWeight: 600,
+                }}
+              >
+                ✨ Generate Gold Layer Table
+              </button>
+              <span className="muted" style={{ marginLeft: 12, fontSize: '0.83rem', color: 'var(--slate)' }}>
+                Snapshots the rows currently matching your filters and search into a report view.
+              </span>
+
+              {gold && (
+                <div className="card" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '12px 16px',
+                      borderBottom: '1px solid #e6e8ef',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <strong style={{ fontSize: '0.95rem' }}>Gold Layer Report</strong>
+                    <span className="muted" style={{ fontSize: '0.82rem', color: 'var(--slate)' }}>
+                      {gold.rowCount} rows · generated {gold.at.toLocaleTimeString()}
+                    </span>
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                      <a
+                        className="btn btn-outline dl-btn"
+                        href={gold.url}
+                        download={`${name}_gold_report.html`}
+                        style={{ textDecoration: 'none' }}
+                      >
+                        ↓ Report (HTML)
+                      </a>
+                      <button className="btn btn-outline dl-btn" onClick={downloadViewCsv}>
+                        ↓ View Data (CSV)
+                      </button>
+                    </span>
+                  </div>
+                  <iframe
+                    src={gold.url}
+                    title="Gold layer report"
+                    style={{ width: '100%', height: 620, border: 0, display: 'block' }}
+                  />
+                </div>
+              )}
             </div>
           </>
         )}
