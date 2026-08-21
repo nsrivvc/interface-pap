@@ -5,6 +5,7 @@ import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-communi
 import { api, apiDownload } from '../api';
 import Header from '../components/Header';
 import { buildGoldReport, describeFilterModel } from '../gold-report';
+import { pbiService, goldDatasetPayload, createReportConfig } from '../powerbi';
 
 const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'parquet'];
 
@@ -63,6 +64,50 @@ export default function TableView() {
   const downloadViewCsv = () =>
     gridApiRef.current?.exportDataAsCsv({ fileName: `${name}_gold_view.csv` });
 
+  // Power BI quick-create: push the filtered rows into an editable report
+  // canvas. 'boot' first renders the container div, then the effect embeds.
+  const pbiRef = useRef(null);
+  const [pbi, setPbi] = useState(null); // null | 'boot' | 'ready' | { error }
+
+  useEffect(() => {
+    if (pbi !== 'boot' || !pbiRef.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const gridApi = gridApiRef.current;
+        const rows = [];
+        gridApi.forEachNodeAfterFilterAndSort((node) => rows.push(node.data));
+        if (!rows.length) throw new Error('No rows in the current view.');
+        const post = () =>
+          api('/api/powerbi/gold-report', {
+            method: 'POST',
+            body: { modelName: `PAP · ${data?.label || name}`, ...goldDatasetPayload(rows) },
+          });
+        let embed;
+        try {
+          embed = await post();
+        } catch (err) {
+          // A bare 5xx/network error usually means the dev API was mid-restart
+          // (node --watch) — retry once before surfacing it.
+          const transient = /^Request failed \(5|failed to fetch|networkerror/i.test(err.message);
+          if (!transient) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          embed = await post();
+        }
+        if (cancelled) return;
+        pbiService.reset(pbiRef.current);
+        const report = pbiService.createReport(pbiRef.current, createReportConfig(embed));
+        report.on('error', (event) =>
+          setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
+        );
+        setPbi('ready');
+      } catch (err) {
+        if (!cancelled) setPbi({ error: err.message });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pbi, name, data]);
+
   const download = async (format) => {
     setDownloading(format);
     setDownloadError('');
@@ -80,6 +125,7 @@ export default function TableView() {
     setError('');
     setQuickFilter('');
     setGold(null);
+    setPbi(null);
     api(`/api/tables/${name}`)
       .then(setData)
       .catch((err) => setError(err.message));
@@ -189,9 +235,48 @@ export default function TableView() {
               >
                 ✨ Generate Gold Layer Table
               </button>
+              <button
+                className="btn"
+                onClick={() => setPbi('boot')}
+                disabled={pbi === 'boot'}
+                style={{
+                  marginLeft: 10,
+                  background: 'linear-gradient(120deg, #f2c811, #e8b30a)',
+                  border: 'none',
+                  color: '#1f2a44',
+                  fontWeight: 600,
+                }}
+              >
+                {pbi === 'boot' ? '⟳ Creating…' : '⚡ Generate Power BI Report'}
+              </button>
               <span className="muted" style={{ marginLeft: 12, fontSize: '0.83rem', color: 'var(--slate)' }}>
-                Snapshots the rows currently matching your filters and search into a report view.
+                Both use the rows currently matching your filters — gold layer is an instant
+                snapshot; Power BI opens a live editing canvas.
               </span>
+
+              {pbi?.error && (
+                <div className="status-line err" style={{ marginTop: 12 }}>
+                  Power BI: {pbi.error}
+                </div>
+              )}
+              {(pbi === 'boot' || pbi === 'ready') && (
+                <div className="card" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
+                      borderBottom: '1px solid #e6e8ef',
+                    }}
+                  >
+                    <strong style={{ fontSize: '0.95rem' }}>Power BI Report</strong>
+                    <span className="muted" style={{ fontSize: '0.82rem', color: 'var(--slate)' }}>
+                      {pbi === 'boot'
+                        ? 'Pushing data to Power BI and generating the report…'
+                        : 'Live canvas over your filtered rows — drag fields from the Data pane to build visuals, then Save to keep the report in the PAP Analytics workspace.'}
+                    </span>
+                  </div>
+                  <div ref={pbiRef} style={{ width: '100%', height: 680 }} />
+                </div>
+              )}
 
               {gold && (
                 <div className="card" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }}>

@@ -8,11 +8,12 @@ import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
 import { triggerPipeline, triggerIngest, pipelineRunStatus, cancelPipelineRuns } from './github.js';
+import { powerbiAadToken, powerbiConfigured, goldReportEmbed } from './powerbi.js';
 import { provider, FEED_KEYS, feedSummaries } from './providers/index.js';
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '8mb' })); // gold-view rows ride in the body
 
 const wrap = (fn) => (req, res) =>
   fn(req, res).catch((err) => res.status(400).json({ error: err.message }));
@@ -202,6 +203,36 @@ app.get('/api/tables/:name', requireAuth, wrap(async (req, res) => {
     // No database — show an empty table
   }
   res.json({ name: table.name, label: table.label, rows });
+}));
+
+// ---------- Power BI ----------
+// AAD token for the embedded quick-create canvas. Handing the service
+// principal's token to the browser is acceptable for this internal tool; the
+// principal only has rights on the PAP Analytics workspace.
+app.get('/api/powerbi/token', requireAuth, wrap(async (req, res) => {
+  if (!powerbiConfigured) {
+    return res.status(503).json({
+      error: 'Power BI is not configured on the server — set the POWERBI_* values in server/.env.',
+    });
+  }
+  const { accessToken, expiresAt } = await powerbiAadToken();
+  res.json({ accessToken, expiresAt, workspaceId: process.env.POWERBI_WORKSPACE_ID });
+}));
+
+// Push the current gold view into a workspace dataset and hand back an embed
+// token for a report-creation canvas over it. Service-principal-safe, unlike
+// quickCreate (which only works with user AAD tokens).
+app.post('/api/powerbi/gold-report', requireAuth, wrap(async (req, res) => {
+  if (!powerbiConfigured) {
+    return res.status(503).json({
+      error: 'Power BI is not configured on the server — set the POWERBI_* values in server/.env.',
+    });
+  }
+  const { modelName, columns, rows } = req.body || {};
+  if (!modelName || !Array.isArray(columns) || !columns.length || !Array.isArray(rows)) {
+    throw new Error('modelName, columns and rows are required.');
+  }
+  res.json(await goldReportEmbed({ modelName, columns, rows }));
 }));
 
 // ---------- Pipeline ----------
