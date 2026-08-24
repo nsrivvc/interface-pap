@@ -5,7 +5,7 @@ import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-communi
 import { api, apiDownload } from '../api';
 import Header from '../components/Header';
 import { buildGoldReport, describeFilterModel } from '../gold-report';
-import { pbiService, goldDatasetPayload, createReportConfig } from '../powerbi';
+import { pbiService, goldDatasetPayload, createReportConfig, editReportConfig, buildStarterReport } from '../powerbi';
 
 const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'parquet'];
 
@@ -78,11 +78,10 @@ export default function TableView() {
         const rows = [];
         gridApi.forEachNodeAfterFilterAndSort((node) => rows.push(node.data));
         if (!rows.length) throw new Error('No rows in the current view.');
+        const modelName = `PAP · ${data?.label || name}`;
+        const payload = goldDatasetPayload(rows);
         const post = () =>
-          api('/api/powerbi/gold-report', {
-            method: 'POST',
-            body: { modelName: `PAP · ${data?.label || name}`, ...goldDatasetPayload(rows) },
-          });
+          api('/api/powerbi/gold-report', { method: 'POST', body: { modelName, ...payload } });
         let embed;
         try {
           embed = await post();
@@ -96,11 +95,32 @@ export default function TableView() {
         }
         if (cancelled) return;
         pbiService.reset(pbiRef.current);
-        const report = pbiService.createReport(pbiRef.current, createReportConfig(embed));
-        report.on('error', (event) =>
-          setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
-        );
-        setPbi('ready');
+        if (embed.mode === 'edit') {
+          // The starter report already exists — open it over the fresh rows
+          const report = pbiService.embed(pbiRef.current, editReportConfig(embed));
+          report.on('error', (event) =>
+            setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
+          );
+          setPbi('ready');
+        } else {
+          // First generate for this table: blank canvas -> auto-build the
+          // starter visuals from the schema -> save as the reusable report
+          const report = pbiService.createReport(pbiRef.current, createReportConfig(embed));
+          report.on('error', (event) =>
+            setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
+          );
+          report.on('loaded', async () => {
+            try {
+              setPbi('authoring');
+              const skipped = await buildStarterReport(report, payload.columns, rows, modelName);
+              if (skipped.length) console.warn('starter visuals skipped:', skipped);
+              setPbi('ready');
+            } catch (err) {
+              console.warn('auto-author failed:', err);
+              setPbi('ready'); // canvas still usable by hand
+            }
+          });
+        }
       } catch (err) {
         if (!cancelled) setPbi({ error: err.message });
       }
@@ -238,7 +258,7 @@ export default function TableView() {
               <button
                 className="btn"
                 onClick={() => setPbi('boot')}
-                disabled={pbi === 'boot'}
+                disabled={pbi === 'boot' || pbi === 'authoring'}
                 style={{
                   marginLeft: 10,
                   background: 'linear-gradient(120deg, #f2c811, #e8b30a)',
@@ -247,7 +267,7 @@ export default function TableView() {
                   fontWeight: 600,
                 }}
               >
-                {pbi === 'boot' ? '⟳ Creating…' : '⚡ Generate Power BI Report'}
+                {pbi === 'boot' ? '⟳ Creating…' : pbi === 'authoring' ? '⟳ Building visuals…' : '⚡ Generate Power BI Report'}
               </button>
               <span className="muted" style={{ marginLeft: 12, fontSize: '0.83rem', color: 'var(--slate)' }}>
                 Both use the rows currently matching your filters — gold layer is an instant
@@ -259,7 +279,7 @@ export default function TableView() {
                   Power BI: {pbi.error}
                 </div>
               )}
-              {(pbi === 'boot' || pbi === 'ready') && (
+              {(pbi === 'boot' || pbi === 'authoring' || pbi === 'ready') && (
                 <div className="card" style={{ marginTop: 16, padding: 0, overflow: 'hidden' }}>
                   <div
                     style={{
@@ -271,7 +291,9 @@ export default function TableView() {
                     <span className="muted" style={{ fontSize: '0.82rem', color: 'var(--slate)' }}>
                       {pbi === 'boot'
                         ? 'Pushing data to Power BI and generating the report…'
-                        : 'Live canvas over your filtered rows — drag fields from the Data pane to build visuals, then Save to keep the report in the PAP Analytics workspace.'}
+                        : pbi === 'authoring'
+                          ? 'Auto-building starter visuals from the table schema…'
+                          : 'Live report over the rows currently matching your filters — edit freely; Save keeps changes in the PAP Analytics workspace.'}
                     </span>
                   </div>
                   <div ref={pbiRef} style={{ width: '100%', height: 680 }} />

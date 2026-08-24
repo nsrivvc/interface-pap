@@ -4,8 +4,10 @@
 // URL /quickcreate, data inline as a single table of string rows (16MB cap),
 // table name fixed to "Table".
 import { service, factories } from 'powerbi-client';
+import 'powerbi-report-authoring'; // augments Page/VisualDescriptor with authoring APIs
 
-export { goldDatasetPayload, createReportConfig } from './powerbi-config';
+export { goldDatasetPayload, createReportConfig, editReportConfig } from './powerbi-config';
+export { buildStarterReport } from './powerbi-author';
 
 
 export const pbiService = new service.Service(

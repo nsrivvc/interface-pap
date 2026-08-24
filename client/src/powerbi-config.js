@@ -50,3 +50,17 @@ export function createReportConfig({ embedToken, datasetId, embedUrl }) {
     settings: { localeSettings: { language: 'en-US' } },
   };
 }
+
+/** Embed config for the saved gold report, opened in edit mode. */
+export function editReportConfig({ embedToken, reportId, embedUrl }) {
+  return {
+    type: 'report',
+    id: reportId,
+    embedUrl,
+    accessToken: embedToken,
+    tokenType: TokenType.Embed,
+    permissions: 7, // Permissions.All — allow save / saveAs
+    viewMode: 1, // ViewMode.Edit
+    settings: { localeSettings: { language: 'en-US' } },
+  };
+}

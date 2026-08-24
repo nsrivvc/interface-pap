@@ -112,19 +112,47 @@ export async function goldReportEmbed({ modelName, columns, rows }) {
     });
   }
 
-  // V2 GenerateToken (dataset + save target); fall back to the older
-  // workspace-scoped Create token if this tenant rejects the V2 shape.
+  // If a previous generate saved the starter report, embed IT (edit mode)
+  // instead of a blank create canvas — the refreshed rows appear in place.
+  const report = (await pbiFetch(`/groups/${ws}/reports`)).value.find(
+    (r) => r.name === modelName
+  );
+
+  // V2 GenerateToken; fall back to the older workspace-scoped shape if the
+  // tenant rejects it.
   let token;
+  const v2 = report
+    ? {
+        datasets: [{ id: datasetId }],
+        reports: [{ id: report.id, allowEdit: true }],
+        targetWorkspaces: [{ id: ws }],
+      }
+    : { datasets: [{ id: datasetId }], targetWorkspaces: [{ id: ws }] };
   try {
-    token = await pbiFetch('/GenerateToken', {
-      method: 'POST',
-      body: { datasets: [{ id: datasetId }], targetWorkspaces: [{ id: ws }] },
-    });
+    token = await pbiFetch('/GenerateToken', { method: 'POST', body: v2 });
   } catch {
-    token = await pbiFetch(`/groups/${ws}/reports/GenerateToken`, {
-      method: 'POST',
-      body: { accessLevel: 'Create', datasetId, allowSaveAs: true },
-    });
+    token = report
+      ? await pbiFetch(`/groups/${ws}/reports/${report.id}/GenerateToken`, {
+          method: 'POST',
+          body: { accessLevel: 'Edit', allowSaveAs: true },
+        })
+      : await pbiFetch(`/groups/${ws}/reports/GenerateToken`, {
+          method: 'POST',
+          body: { accessLevel: 'Create', datasetId, allowSaveAs: true },
+        });
   }
-  return { datasetId, embedToken: token.token, embedUrl: 'https://app.powerbi.com/reportEmbed' };
+  return report
+    ? {
+        mode: 'edit',
+        datasetId,
+        reportId: report.id,
+        embedToken: token.token,
+        embedUrl: report.embedUrl || 'https://app.powerbi.com/reportEmbed',
+      }
+    : {
+        mode: 'create',
+        datasetId,
+        embedToken: token.token,
+        embedUrl: 'https://app.powerbi.com/reportEmbed',
+      };
 }
