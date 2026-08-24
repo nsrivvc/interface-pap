@@ -5,7 +5,7 @@ import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-communi
 import { api, apiDownload } from '../api';
 import Header from '../components/Header';
 import { buildGoldReport, describeFilterModel } from '../gold-report';
-import { pbiService, goldDatasetPayload, createReportConfig, editReportConfig, buildStarterReport } from '../powerbi';
+import { pbiService, goldDatasetPayload, createReportConfig, editReportConfig, ensureStarterReport } from '../powerbi';
 
 const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'parquet'];
 
@@ -67,7 +67,8 @@ export default function TableView() {
   // Power BI quick-create: push the filtered rows into an editable report
   // canvas. 'boot' first renders the container div, then the effect embeds.
   const pbiRef = useRef(null);
-  const [pbi, setPbi] = useState(null); // null | 'boot' | 'ready' | { error }
+  const pbiRebooted = useRef(false); // guards the one-time create->edit restart
+  const [pbi, setPbi] = useState(null); // null | 'boot' | 'authoring' | 'ready' | { error }
 
   useEffect(() => {
     if (pbi !== 'boot' || !pbiRef.current) return;
@@ -96,28 +97,43 @@ export default function TableView() {
         if (cancelled) return;
         pbiService.reset(pbiRef.current);
         if (embed.mode === 'edit') {
-          // The starter report already exists — open it over the fresh rows
+          // Open the saved report over the fresh rows; if it's empty (first
+          // generate, or the user deleted everything) build the starter
+          // visuals right here and save them into it.
           const report = pbiService.embed(pbiRef.current, editReportConfig(embed));
-          report.on('error', (event) =>
-            setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
-          );
-          setPbi('ready');
-        } else {
-          // First generate for this table: blank canvas -> auto-build the
-          // starter visuals from the schema -> save as the reusable report
-          const report = pbiService.createReport(pbiRef.current, createReportConfig(embed));
           report.on('error', (event) =>
             setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
           );
           report.on('loaded', async () => {
             try {
               setPbi('authoring');
-              const skipped = await buildStarterReport(report, payload.columns, rows, modelName);
-              if (skipped.length) console.warn('starter visuals skipped:', skipped);
+              const { authored, skipped } = await ensureStarterReport(report, payload.columns, rows);
+              if (authored && skipped.length) console.warn('starter visuals skipped:', skipped);
               setPbi('ready');
             } catch (err) {
               console.warn('auto-author failed:', err);
               setPbi('ready'); // canvas still usable by hand
+            }
+          });
+        } else {
+          // No saved report yet: boot the create canvas just long enough to
+          // save an empty report into the workspace, then restart into the
+          // edit path above, which authors the starter visuals.
+          const created = pbiService.createReport(pbiRef.current, createReportConfig(embed));
+          created.on('error', (event) =>
+            setPbi({ error: event?.detail?.message || 'Power BI reported an error.' })
+          );
+          created.on('loaded', async () => {
+            try {
+              await created.saveAs({ name: modelName });
+            } catch (err) {
+              setPbi({ error: `Could not save the new report: ${err?.message || err}` });
+            }
+          });
+          created.on('saved', () => {
+            if (!pbiRebooted.current) {
+              pbiRebooted.current = true;
+              setPbi('boot'); // server will now find the report -> edit path
             }
           });
         }
@@ -257,7 +273,7 @@ export default function TableView() {
               </button>
               <button
                 className="btn"
-                onClick={() => setPbi('boot')}
+                onClick={() => { pbiRebooted.current = false; setPbi('boot'); }}
                 disabled={pbi === 'boot' || pbi === 'authoring'}
                 style={{
                   marginLeft: 10,

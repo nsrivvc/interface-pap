@@ -1,4 +1,7 @@
-// Auto-authors the starter "gold layer" report on a fresh create-mode canvas:
+// Auto-authors the starter "gold layer" report into an EDIT-mode embedded
+// report (powerbi-report-authoring extends Report/Page/VisualDescriptor —
+// the create-mode Create embed has none of those APIs, which is why this
+// only runs after the empty report is saved and reopened in edit mode):
 // picks a measure, categories and a date column from the pushed schema, lays
 // out card / slicer / column chart / donut / trend / table, then saves the
 // report into the workspace so later generates re-embed it directly.
@@ -60,7 +63,19 @@ export function pickFields(columns, rows) {
 // Two-column grid on the default 1280x720 canvas
 const L = 16, W = 616, R = 648, FULL = 1248;
 
-export async function buildStarterReport(report, columns, rows, modelName) {
+/**
+ * If the opened report has no visuals yet, build the starter layout and save.
+ * Returns { authored, skipped } — authored=false means it already had content.
+ */
+export async function ensureStarterReport(report, columns, rows) {
+  const page = (await report.getPages())[0];
+  const existing = await page.getVisuals();
+  if (existing.length) return { authored: false, skipped: [] };
+  const skipped = await buildStarterReport(report, columns, rows);
+  return { authored: true, skipped };
+}
+
+export async function buildStarterReport(report, columns, rows) {
   const page = (await report.getPages())[0];
   const { measure, cats, date, tableCols } = pickFields(columns, rows);
   const errors = [];
@@ -108,7 +123,7 @@ export async function buildStarterReport(report, columns, rows, modelName) {
     tableCols.map((n) => ['Values', col(n)])
   );
 
-  // Persist so the next generate embeds this report directly with fresh rows
-  await report.saveAs({ name: modelName });
+  // Persist into the already-saved report
+  await report.save();
   return errors;
 }

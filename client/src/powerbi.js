@@ -7,7 +7,7 @@ import { service, factories } from 'powerbi-client';
 import 'powerbi-report-authoring'; // augments Page/VisualDescriptor with authoring APIs
 
 export { goldDatasetPayload, createReportConfig, editReportConfig } from './powerbi-config';
-export { buildStarterReport } from './powerbi-author';
+export { ensureStarterReport } from './powerbi-author';
 
 
 export const pbiService = new service.Service(
