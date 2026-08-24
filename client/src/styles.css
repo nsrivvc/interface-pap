@@ -1377,3 +1377,141 @@ td.json-cell {
 .wf-attached-sign.out {
   color: #b4531f;
 }
+
+/* ---- Configure Components: pipeline filter picker ---- */
+.pf-source {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+.pf-source-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.pf-source-title {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--navy);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.pf-count {
+  font-size: 0.72rem;
+  color: var(--slate);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.pf-count.active {
+  color: #fff;
+  background: var(--orange);
+  border-color: var(--orange);
+  font-weight: 600;
+}
+.pf-tag {
+  font-size: 0.7rem;
+  color: var(--slate);
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.pf-links {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+}
+.pf-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--orange);
+  cursor: pointer;
+  font-family: inherit;
+}
+.pf-link:hover {
+  text-decoration: underline;
+}
+.pf-link:disabled {
+  color: var(--slate);
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+.pf-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pf-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  color: var(--navy);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.13s ease, background 0.13s ease, box-shadow 0.13s ease,
+    transform 0.1s ease;
+}
+.pf-pill:hover {
+  border-color: var(--orange);
+  box-shadow: 0 1px 4px rgba(192, 90, 30, 0.15);
+}
+.pf-pill:active {
+  transform: scale(0.96);
+}
+.pf-pill.selected {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.pf-pill.selected:hover {
+  background: var(--navy-deep);
+  border-color: var(--orange);
+}
+.pf-pill-mark {
+  font-size: 0.72rem;
+  opacity: 0.85;
+}
+.pf-pill.selected .pf-pill-mark {
+  color: #7ee2a8;
+}
+.pf-search {
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-family: inherit;
+}
+.pf-skeleton {
+  height: 32px;
+  border-color: transparent;
+  background: linear-gradient(90deg, #eceef3 25%, #f6f7fa 50%, #eceef3 75%);
+  background-size: 200% 100%;
+  animation: pf-shimmer 1.2s infinite;
+}
+@keyframes pf-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+.pf-empty {
+  font-size: 0.76rem;
+  color: var(--slate);
+  margin: 4px 0 0;
+}

@@ -55,6 +55,162 @@ const SHIPPER_ACTIONS = [
   { key: 'remove', label: 'Remove', hint: 'Drop this DUNS from the raw table' },
 ];
 
+// ---- Pipeline filter picker (Configure Components) ----
+// Lists each selected source's pipelines (TSP names) via /api/pipeline-options
+// — served from the live source API when it's up, otherwise from the
+// warehouse's bronze rows — and lets the user pick which ones this workflow
+// keeps. Cached per source for the session.
+const pipelineOptionsCache = {};
+
+function PipelineFilterPicker({ sources, filters, onChange }) {
+  const [options, setOptions] = useState({});
+  const [status, setStatus] = useState('idle'); // idle | loading | error | ready
+  const [search, setSearch] = useState({}); // source -> filter text
+
+  useEffect(() => {
+    if (!sources.length) return;
+    const missing = sources.filter((k) => !pipelineOptionsCache[k]);
+    if (!missing.length) {
+      setOptions({ ...pipelineOptionsCache });
+      setStatus('ready');
+      return;
+    }
+    let stale = false;
+    setStatus('loading');
+    api(`/api/pipeline-options?sources=${missing.join(',')}`)
+      .then(({ options: got }) => {
+        Object.assign(pipelineOptionsCache, got);
+        if (!stale) {
+          setOptions({ ...pipelineOptionsCache });
+          setStatus('ready');
+        }
+      })
+      .catch(() => {
+        if (!stale) setStatus('error');
+      });
+    return () => {
+      stale = true;
+    };
+  }, [sources.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = (key, name) => {
+    const cur = filters[key] || [];
+    onChange({
+      ...filters,
+      [key]: cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
+    });
+  };
+  const setAll = (key, names) => onChange({ ...filters, [key]: names });
+
+  if (!sources.length) {
+    return (
+      <p className="pf-empty">
+        Select at least one source below — each source&apos;s pipeline list is pulled from its
+        API.
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="wf-note" style={{ marginBottom: 10 }}>
+        Click pipelines to keep them when a feed is processed — pick as many as you like per
+        source. A source with nothing selected lets every pipeline through.
+      </p>
+      {status === 'error' && (
+        <p className="wf-sources-warn">Couldn&apos;t load the pipeline lists — is the API running?</p>
+      )}
+      {sources.map((key) => {
+        const opt = options[key];
+        const all = opt?.pipelines || [];
+        const chosen = filters[key] || [];
+        const q = (search[key] || '').toLowerCase();
+        const shown = q ? all.filter((pl) => pl.name.toLowerCase().includes(q)) : all;
+        return (
+          <div key={key} className="pf-source">
+            <div className="pf-source-head">
+              <span className="pf-source-title">{sourceLabel(key)}</span>
+              <span className={`pf-count ${chosen.length ? 'active' : ''}`}>
+                {chosen.length
+                  ? `${chosen.length} of ${all.length} selected`
+                  : all.length
+                    ? `no filter — all ${all.length} flow through`
+                    : 'no filter'}
+              </span>
+              {opt?.from === 'warehouse' && (
+                <span
+                  className="pf-tag"
+                  title="The source API isn't reachable — this list comes from rows already ingested into the warehouse"
+                >
+                  from ingested data
+                </span>
+              )}
+              <span className="pf-links">
+                <button
+                  type="button"
+                  className="pf-link"
+                  disabled={!all.length || chosen.length === all.length}
+                  onClick={() => setAll(key, all.map((pl) => pl.name))}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="pf-link"
+                  disabled={!chosen.length}
+                  onClick={() => setAll(key, [])}
+                >
+                  Clear
+                </button>
+              </span>
+            </div>
+            {all.length > 10 && (
+              <input
+                type="text"
+                className="pf-search"
+                placeholder={`Search ${sourceLabel(key)} pipelines…`}
+                value={search[key] || ''}
+                onChange={(e) => setSearch((sv) => ({ ...sv, [key]: e.target.value }))}
+              />
+            )}
+            {status === 'loading' && !opt ? (
+              <div className="pf-pills">
+                {[96, 138, 112, 150].map((w) => (
+                  <span key={w} className="pf-pill pf-skeleton" style={{ width: w }} />
+                ))}
+              </div>
+            ) : all.length ? (
+              <div className="pf-pills">
+                {shown.map((pl) => {
+                  const on = chosen.includes(pl.name);
+                  return (
+                    <button
+                      key={pl.name}
+                      type="button"
+                      className={`pf-pill ${on ? 'selected' : ''}`}
+                      title={pl.duns ? `DUNS ${pl.duns}` : pl.name}
+                      onClick={() => toggle(key, pl.name)}
+                    >
+                      <span className="pf-pill-mark">{on ? '✓' : '+'}</span>
+                      {pl.name}
+                    </button>
+                  );
+                })}
+                {!shown.length && (
+                  <span className="pf-empty">No pipelines match &quot;{search[key]}&quot;.</span>
+                )}
+              </div>
+            ) : (
+              <p className="pf-empty">
+                No pipelines found yet — run this source once and its pipelines appear here.
+              </p>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 const TIMEZONES = (() => {
   try {
     return Intl.supportedValuesOf('timeZone');
@@ -102,23 +258,9 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
   const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
-  const [draftPipelines, setDraftPipelines] = useState([]);
+  const [draftPipelineFilters, setDraftPipelineFilters] = useState({}); // source -> [TSP names]
   const [draftShippers, setDraftShippers] = useState([]);
   const [draftRecDels, setDraftRecDels] = useState([]);
-
-  // Extra pipelines attached at setup time. Placeholder fields for now —
-  // what a pipeline actually points at will be wired up later.
-  const addDraftPipeline = () =>
-    setDraftPipelines((ps) => [
-      ...ps,
-      { id: Date.now(), name: '', stage: 3, target: '', notes: '' },
-    ]);
-
-  const updateDraftPipeline = (id, patch) =>
-    setDraftPipelines((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-
-  const removeDraftPipeline = (id) =>
-    setDraftPipelines((ps) => ps.filter((p) => p.id !== id));
 
   // Shippers configured at setup time. Each row is one K-holder plus what to
   // do with it: `add` filters the raw table to that DUNS, `remove` drops it.
@@ -195,7 +337,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setDraftSources(ALL_SOURCE_KEYS);
     setDraftTime('');
     setDraftTz(LOCAL_TZ);
-    setDraftPipelines([]);
+    setDraftPipelineFilters({});
     setDraftShippers([]);
     setDraftRecDels([]);
   };
@@ -207,7 +349,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const sources = ALL_SOURCE_KEYS.filter((k) => draftSources.includes(k));
     const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
     // Drop pipeline rows the user added but left entirely blank
-    const pipelines = draftPipelines.filter((p) => p.name.trim() || p.target.trim());
     // Same for shipper rows — a shipper counts as filled if either field is set
     const shippers = draftShippers.filter(
       (sh) => sh.kHolderName.trim() || sh.kHolderNumber.trim()
@@ -225,7 +366,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
         stageCount: STAGE_DEFS.length,
         sources,
         schedule,
-        pipelines,
+        pipelineFilters: draftPipelineFilters,
         shippers,
         recDels,
       },
@@ -252,28 +393,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
       sources: wf.sources,
       time: wf.schedule?.time || '',
       tz: wf.schedule?.tz || LOCAL_TZ,
-      pipelines: wf.pipelines || [],
+      pipelineFilters: wf.pipelineFilters || {},
       shippers: wf.shippers || [],
       recDels: wf.recDels || [],
     });
   };
 
-  // Extra pipelines attached to a workflow. Placeholder fields for now —
-  // what a pipeline actually points at will be wired up later.
-  const addEditPipeline = () =>
-    setEditDraft((d) => ({
-      ...d,
-      pipelines: [...d.pipelines, { id: Date.now(), name: '', stage: 3, target: '', notes: '' }],
-    }));
-
-  const updateEditPipeline = (id, patch) =>
-    setEditDraft((d) => ({
-      ...d,
-      pipelines: d.pipelines.map((p) => (p.id === id ? { ...p, ...patch } : p)),
-    }));
-
-  const removeEditPipeline = (id) =>
-    setEditDraft((d) => ({ ...d, pipelines: d.pipelines.filter((p) => p.id !== id) }));
 
   // Shippers attached to a workflow. Placeholder fields for now — how a
   // shipper scopes the workflow's data will be wired up later.
@@ -338,7 +463,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
             sources: ALL_SOURCE_KEYS.filter((k) => editDraft.sources.includes(k)),
             schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
             // Drop pipeline rows the user added but left entirely blank
-            pipelines: editDraft.pipelines.filter((p) => p.name.trim() || p.target.trim()),
+            pipelineFilters: editDraft.pipelineFilters || {},
             // Same for shipper rows — filled if either field is set
             shippers: editDraft.shippers.filter(
               (sh) => sh.kHolderName.trim() || sh.kHolderNumber.trim()
@@ -664,81 +789,33 @@ export default function WorkflowPanel({ onPipelineRan }) {
             />
           </div>
 
-          {/* Workflow Components — the optional pieces attached to a workflow.
-              All three are placeholders; what each one drives is wired up later. */}
+          {/* Configure Components — pipelines, shippers and rec-del pairings,
+              combined into one card. Pipeline filters are live; the rest are
+              placeholders wired up later. */}
           <div className="wf-group-head">
-            <strong>Workflow Components</strong>
+            <strong>Configure Components</strong>
             <span className="muted">
-              optional pieces attached to this workflow — what each one drives will be
-              configured later
+              pipeline filters, shippers and rec-del pairings for this workflow — all in one
+              place
             </span>
           </div>
 
-          {/* Additional pipelines — placeholder fields, parameters wired up later */}
           <div className="wf-sources" style={{ marginTop: 0, borderLeftColor: 'var(--navy)' }}>
+            {/* Pipelines — pick which TSPs each selected source keeps */}
             <div className="wf-sources-head">
               <strong>Pipelines</strong>
               <span className="muted">
-                attach additional pipelines to this workflow — what they run will be
-                configured later
+                filter each source down to specific pipelines — lists come from the source APIs
               </span>
             </div>
-            {draftPipelines.length === 0 && (
-              <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
-                No pipelines added yet.
-              </p>
-            )}
-            {draftPipelines.map((p) => (
-              <div key={p.id} className="wf-pipeline-row">
-                <input
-                  type="text"
-                  placeholder="Pipeline name"
-                  value={p.name}
-                  onChange={(e) => updateDraftPipeline(p.id, { name: e.target.value })}
-                />
-                <select
-                  value={p.stage}
-                  onChange={(e) => updateDraftPipeline(p.id, { stage: Number(e.target.value) })}
-                  title="The stage this pipeline runs at"
-                >
-                  <option value={1}>Stage 1 — API to Raw</option>
-                  {STAGE_DEFS.map((stage) => (
-                    <option key={stage.key} value={stage.key}>
-                      {stage.label} — {stage.desc}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  className="wf-pipeline-target"
-                  placeholder="Target (workflow file, endpoint, script…)"
-                  value={p.target}
-                  onChange={(e) => updateDraftPipeline(p.id, { target: e.target.value })}
-                />
-                <input
-                  type="text"
-                  className="wf-pipeline-notes"
-                  placeholder="Notes (optional)"
-                  value={p.notes}
-                  onChange={(e) => updateDraftPipeline(p.id, { notes: e.target.value })}
-                />
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  title="Remove this pipeline"
-                  onClick={() => removeDraftPipeline(p.id)}
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-            <button type="button" className="btn btn-outline" onClick={addDraftPipeline}>
-              + Add Pipeline
-            </button>
-          </div>
+            <PipelineFilterPicker
+              sources={draftSources}
+              filters={draftPipelineFilters}
+              onChange={setDraftPipelineFilters}
+            />
 
-          {/* Shippers — placeholder fields, scoping wired up later */}
-          <div className="wf-sources" style={{ marginTop: 16, borderLeftColor: 'var(--navy)' }}>
+            {/* Shippers — placeholder fields, scoping wired up later */}
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid #e6e8ef' }}>
             <div className="wf-sources-head">
               <strong>Shippers</strong>
               <span className="muted">
@@ -797,8 +874,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
             </button>
           </div>
 
-          {/* Rec-del pairs — placeholder fields, Stage 4 wiring comes later */}
-          <div className="wf-sources" style={{ marginTop: 16, borderLeftColor: 'var(--navy)' }}>
+            {/* Rec-del pairs — placeholder fields, Stage 4 wiring comes later */}
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid #e6e8ef' }}>
             <div className="wf-sources-head">
               <strong>Rec-Del Pairings</strong>
               <span className="muted">
@@ -853,6 +930,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
             <button type="button" className="btn btn-outline" onClick={addDraftRecDel}>
               + Add Rec-Del Pairing
             </button>
+          </div>
           </div>
 
           {/* Source pipelines to retrieve — the only switches on the form */}
@@ -995,71 +1073,24 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   <p className="wf-sources-warn">Select at least one source.</p>
                 )}
                 <div className="wf-group-head" style={{ margin: '20px 0 4px' }}>
-                  <strong>Workflow Components</strong>
+                  <strong>Configure Components</strong>
                   <span className="muted">
-                    optional pieces attached to this workflow — what each one drives will be
-                    configured later
+                    pipeline filters, shippers and rec-del pairings for this workflow — all in
+                    one place
                   </span>
                 </div>
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
                   <strong>Pipelines</strong>
                   <span className="muted">
-                    attach additional pipelines to this workflow — what they run will be
-                    configured later
+                    filter each source down to specific pipelines — lists come from the source
+                    APIs
                   </span>
                 </div>
-                {editDraft.pipelines.length === 0 && (
-                  <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
-                    No pipelines added yet.
-                  </p>
-                )}
-                {editDraft.pipelines.map((p) => (
-                  <div key={p.id} className="wf-pipeline-row">
-                    <input
-                      type="text"
-                      placeholder="Pipeline name"
-                      value={p.name}
-                      onChange={(e) => updateEditPipeline(p.id, { name: e.target.value })}
-                    />
-                    <select
-                      value={p.stage}
-                      onChange={(e) => updateEditPipeline(p.id, { stage: Number(e.target.value) })}
-                      title="The stage this pipeline runs at"
-                    >
-                      <option value={1}>Stage 1 — API to Raw</option>
-                      {STAGE_DEFS.map((stage) => (
-                        <option key={stage.key} value={stage.key}>
-                          {stage.label} — {stage.desc}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      className="wf-pipeline-target"
-                      placeholder="Target (workflow file, endpoint, script…)"
-                      value={p.target}
-                      onChange={(e) => updateEditPipeline(p.id, { target: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      className="wf-pipeline-notes"
-                      placeholder="Notes (optional)"
-                      value={p.notes}
-                      onChange={(e) => updateEditPipeline(p.id, { notes: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      title="Remove this pipeline"
-                      onClick={() => removeEditPipeline(p.id)}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="btn btn-outline" onClick={addEditPipeline}>
-                  + Add Pipeline
-                </button>
+                <PipelineFilterPicker
+                  sources={editDraft.sources}
+                  filters={editDraft.pipelineFilters}
+                  onChange={(pf) => setEditDraft((d) => ({ ...d, pipelineFilters: pf }))}
+                />
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
                   <strong>Shippers</strong>
                   <span className="muted">
@@ -1227,9 +1258,10 @@ export default function WorkflowPanel({ onPipelineRan }) {
                       {wf.stageCount} stage{wf.stageCount > 1 ? 's' : ''}
                     </span>
                   )}
-                  {wf.pipelines?.length > 0 && (
+                  {Object.values(wf.pipelineFilters || {}).flat().length > 0 && (
                     <span className="badge manual" style={{ marginLeft: 4 }}>
-                      {wf.pipelines.length} pipeline{wf.pipelines.length > 1 ? 's' : ''}
+                      {Object.values(wf.pipelineFilters).flat().length} pipeline filter
+                      {Object.values(wf.pipelineFilters).flat().length > 1 ? 's' : ''}
                     </span>
                   )}
                   {wf.shippers?.length > 0 && (

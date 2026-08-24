@@ -205,6 +205,69 @@ app.get('/api/tables/:name', requireAuth, wrap(async (req, res) => {
   res.json({ name: table.name, label: table.label, rows });
 }));
 
+// ---------- Pipeline filter options ----------
+// Distinct pipeline (TSP) names per source, for the workflow "Configure
+// Components" picker. Prefers pinging the live source API; falls back to the
+// warehouse's bronze rows when the mock isn't running.
+// Per-feed source path plus which columns carry the pipeline (TSP) identity —
+// gTran feeds use tspname/tspduns, awards spells it out in full.
+const SOURCE_PIPELINES = {
+  firm: { path: '/api/firms', name: 'tspname', duns: 'tspduns' },
+  interruptible: { path: '/api/interruptibles', name: 'tspname', duns: 'tspduns' },
+  awards: { path: '/api/awards', name: 'transportationserviceprovidername', duns: null },
+};
+const SOURCE_API_BASE = process.env.SOURCE_API_BASE || 'http://localhost:8000';
+
+app.get('/api/pipeline-options', requireAuth, wrap(async (req, res) => {
+  const wanted = String(req.query.sources || '').split(',').filter((k) => SOURCE_PIPELINES[k]);
+  const options = {};
+  await Promise.all(wanted.map(async (key) => {
+    // 1. the live source API for this feed
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 2500);
+      const resp = await fetch(`${SOURCE_API_BASE}${SOURCE_PIPELINES[key].path}`, { signal: ctl.signal });
+      clearTimeout(timer);
+      if (resp.ok) {
+        const body = await resp.json();
+        const records = Array.isArray(body) ? body : body.data || body.results || [];
+        const spec = SOURCE_PIPELINES[key];
+        const seen = new Map();
+        for (const r of records) {
+          const name = r[spec.name] || r.tspname || r.TSPName || r.transportationserviceprovidername;
+          if (name && !seen.has(name))
+            seen.set(name, { name, duns: (spec.duns && r[spec.duns]) || null });
+        }
+        if (seen.size) {
+          options[key] = {
+            from: 'source-api',
+            pipelines: [...seen.values()].sort((a, b) => a.name.localeCompare(b.name)),
+          };
+          return;
+        }
+      }
+    } catch {
+      // source API unreachable — fall through to the warehouse
+    }
+    // 2. what the warehouse has already ingested for this feed
+    try {
+      const backing = provider.feeds[key]?.tables?.bronze?.table;
+      const spec = SOURCE_PIPELINES[key];
+      if (!backing) throw new Error('no bronze table');
+      options[key] = {
+        from: 'warehouse',
+        pipelines: await sql.query(
+          `SELECT DISTINCT ${spec.name} AS name, ${spec.duns || 'NULL'} AS duns
+           FROM ${backing} WHERE ${spec.name} IS NOT NULL ORDER BY 1`
+        ),
+      };
+    } catch {
+      options[key] = { from: 'none', pipelines: [] };
+    }
+  }));
+  res.json({ options });
+}));
+
 // ---------- Power BI ----------
 // AAD token for the embedded quick-create canvas. Handing the service
 // principal's token to the browser is acceptable for this internal tool; the
