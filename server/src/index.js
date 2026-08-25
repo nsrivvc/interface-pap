@@ -131,6 +131,12 @@ const STAGE_TABLES = [
         label: 'Pipeline Attribute Table',
         backing: 'public.pipeline_attributes',
       },
+      {
+        name: 'rec_del_pairings',
+        label: 'Rec-Del Pairing Config',
+        backing: 'public.rec_del_pairings',
+        orderBy: '"Order"',
+      },
     ],
   },
   // Operational tables — the same whichever API is upstream
@@ -205,6 +211,236 @@ app.get('/api/tables/:name', requireAuth, wrap(async (req, res) => {
   res.json({ name: table.name, label: table.label, rows });
 }));
 
+// ---------- Configure Components ----------
+// The editable reference tables behind the workflow "Configure Components"
+// card. Each spec carries the DDL to lazily create (and seed) its backing
+// table, so adding a row works on a fresh database without running schema.sql
+// by hand. Columns are introspected live — add a column in Neon and the UI's
+// grid + add-row form pick it up automatically. `columns` is only the no-DB
+// fallback so the grids still render in local mode.
+const COMPONENT_TABLES = {
+  'pipeline-attributes': {
+    backing: 'public.pipeline_attributes',
+    ensure: [
+      `CREATE TABLE IF NOT EXISTS public.pipeline_attributes (id serial PRIMARY KEY)`,
+      // Migrate the earlier minimal shape (PipelineName/DUNS) to the real one
+      `DO $$ BEGIN
+         IF EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'pipeline_attributes'
+                      AND column_name = 'PipelineName') THEN
+           IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = 'pipeline_attributes'
+                        AND column_name = 'Pipeline') THEN
+             ALTER TABLE public.pipeline_attributes DROP COLUMN "PipelineName";
+           ELSE
+             ALTER TABLE public.pipeline_attributes RENAME COLUMN "PipelineName" TO "Pipeline";
+           END IF;
+         END IF;
+       END $$`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "Pipeline" text`,
+      // DUNS stays text — it carries leading zeros ("094992187")
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "DUNS" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "ContractDateStructure" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "LocationEntDateStructure" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "Segmented" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "AmendmentReporting" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "PipelineType" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "Source" text`,
+      `ALTER TABLE public.pipeline_attributes ADD COLUMN IF NOT EXISTS "Seasons" text`,
+      `INSERT INTO public.pipeline_attributes
+         ("Pipeline", "DUNS", "ContractDateStructure", "LocationEntDateStructure",
+          "Segmented", "AmendmentReporting", "PipelineType", "Source", "Seasons")
+       SELECT * FROM (VALUES
+         ('Carolina Gas Transmission, LLC', '094992187', 'Inclusive', 'Inclusive', 'No', 'All Data', 'Transportation & Storage', 'gTRAN FIRM', 'NA'),
+         ('Destin Pipeline Company, L.L.C.', '809423697', 'Inclusive', 'NA', 'No', 'NA', 'Transportation', 'gINDEX IOC', 'NA'),
+         ('Gulfstream Natural Gas System, L.L.C.', '017738746', 'Inclusive', 'Exclusive', 'No', 'All Data', 'Transportation & Storage', 'gTRAN IT', 'NA'),
+         ('BBT (Midla), LLC', '057111270', 'Inclusive', 'Exclusive', 'No', 'All Data', 'Transportation', 'gTRAN FIRM', 'NA'),
+         ('Columbia Gas Transmission, LLC', '054748041', 'Inclusive', 'Inclusive', 'No', 'All Data', 'Transportation & Storage', 'gXCHANGE Awards', 'NA'),
+         ('Golden Triangle Storage, Inc.', '808627587', 'Exclusive', 'Exclusive', 'No', 'All Data', 'Storage', 'gXCHANGE Awards', 'NA'),
+         ('Golden Triangle Storage, Inc.', '808627587', 'Inclusive', 'NA', 'No', 'NA', 'Storage', 'gINDEX IOC', 'NA'),
+         ('Pine Prairie Energy Center, LLC', '187408526', 'Inclusive', 'Inclusive', 'No', 'All Data', 'Transportation & Storage', 'gTRAN IT', 'NA'),
+         ('Pine Prairie Energy Center, LLC', '187408526', 'Inclusive', 'NA', 'No', 'NA', 'Transportation & Storage', 'gINDEX IOC', 'NA'),
+         ('ANR Pipeline Company', '006958581', 'Inclusive', 'Inclusive', 'No', 'All Data', 'Transportation & Storage', 'gTRAN IT', 'NA'),
+         ('Bobcat Gas Storage', '614834559', 'Inclusive', 'Inclusive', 'No', 'All Data', 'Storage', 'gTRAN FIRM', 'NA'),
+         ('Elba Express Company, L.L.C.', '828834445', 'Inclusive', 'Inclusive', 'No', 'All Data', 'Transportation & Storage', 'gXCHANGE Awards', 'NA'),
+         ('Panhandle Eastern Pipe Line Company, LP', '045256641', 'Inclusive', 'NA', 'No', 'NA', 'Transportation & Storage', 'gINDEX IOC', 'NA')
+       ) v("Pipeline", "DUNS", "ContractDateStructure", "LocationEntDateStructure",
+           "Segmented", "AmendmentReporting", "PipelineType", "Source", "Seasons")
+       WHERE NOT EXISTS (SELECT 1 FROM public.pipeline_attributes)`,
+    ],
+    orderBy: 'id',
+    columns: [
+      { name: 'id', dataType: 'integer', auto: true },
+      { name: 'Pipeline', dataType: 'text' },
+      { name: 'DUNS', dataType: 'text' },
+      { name: 'ContractDateStructure', dataType: 'text' },
+      { name: 'LocationEntDateStructure', dataType: 'text' },
+      { name: 'Segmented', dataType: 'text' },
+      { name: 'AmendmentReporting', dataType: 'text' },
+      { name: 'PipelineType', dataType: 'text' },
+      { name: 'Source', dataType: 'text' },
+      { name: 'Seasons', dataType: 'text' },
+    ],
+  },
+  shipping: {
+    backing: 'public.shipping',
+    ensure: [
+      `CREATE TABLE IF NOT EXISTS public.shipping ("KHolderName" text, "KHolderNo" text)`,
+    ],
+    orderBy: '"KHolderNo"',
+    columns: [
+      { name: 'KHolderName', dataType: 'text' },
+      { name: 'KHolderNo', dataType: 'text' },
+    ],
+  },
+  // One row per entry of the Stage 4 rec-del pairing JSON — the rows ARE the
+  // JSON array (Pipeline, DUNS, Order, Pattern, Regex), seeded with the
+  // default patterns so the config starts out matching the pipeline's file.
+  'rec-del-pairings': {
+    backing: 'public.rec_del_pairings',
+    ensure: [
+      `CREATE TABLE IF NOT EXISTS public.rec_del_pairings (
+        id serial PRIMARY KEY,
+        "Pipeline" text NOT NULL DEFAULT 'default',
+        "DUNS" bigint NOT NULL DEFAULT 0,
+        "Order" integer,
+        "Pattern" text,
+        "Regex" text
+      )`,
+      `INSERT INTO public.rec_del_pairings ("Pipeline", "DUNS", "Order", "Pattern", "Regex")
+       SELECT * FROM (VALUES
+         ('default', 0::bigint, 1, 'R^n-D^m (n>=1,m>=1)', '^R(?:-R)*-D(?:-D)*$'),
+         ('default', 0::bigint, 2, 'D^n-R^m (n>=1,m>=1)', '^D(?:-D)*-R(?:-R)*$'),
+         ('default', 0::bigint, 3, 'Alternating R-D', '^(R-D)+$'),
+         ('default', 0::bigint, 4, 'Alternating D-R', '^(D-R)+$'),
+         ('default', 0::bigint, 5, 'Alternating R-D-R', '^(R-D-R)+$'),
+         ('default', 0::bigint, 6, 'Alternating D-R-D', '^(D-R-D)+$')
+       ) v("Pipeline", "DUNS", "Order", "Pattern", "Regex")
+       WHERE NOT EXISTS (SELECT 1 FROM public.rec_del_pairings)`,
+    ],
+    orderBy: '"Order", id',
+    columns: [
+      { name: 'id', dataType: 'integer', auto: true },
+      { name: 'Pipeline', dataType: 'text' },
+      { name: 'DUNS', dataType: 'bigint' },
+      { name: 'Order', dataType: 'integer' },
+      { name: 'Pattern', dataType: 'text' },
+      { name: 'Regex', dataType: 'text' },
+    ],
+  },
+};
+
+const componentSpec = (key) => {
+  const spec = COMPONENT_TABLES[key];
+  if (!spec) throw new Error('Unknown component table.');
+  return spec;
+};
+
+// Create/seed the backing table once per process; a failure (no database)
+// just means the caller falls back to the spec's static column list.
+async function ensureComponentTable(spec) {
+  if (spec._ensured) return true;
+  try {
+    for (const ddl of spec.ensure) await sql.query(ddl);
+    spec._ensured = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Live column list from Postgres so the grid and add-row form always match
+// the real table; identity/serial columns are flagged so the form skips them.
+async function componentColumns(spec) {
+  const [schema, table] = spec.backing.split('.');
+  const cols = await sql.query(
+    `SELECT column_name AS name, data_type AS "dataType",
+            (is_identity = 'YES' OR COALESCE(column_default, '') LIKE 'nextval(%') AS auto
+     FROM information_schema.columns
+     WHERE table_schema = $1 AND table_name = $2
+     ORDER BY ordinal_position`,
+    [schema, table]
+  );
+  return cols.length ? cols : spec.columns;
+}
+
+app.get('/api/components/:key', requireAuth, wrap(async (req, res) => {
+  const spec = componentSpec(req.params.key);
+  let columns = spec.columns;
+  let rows = [];
+  if (await ensureComponentTable(spec)) {
+    columns = await componentColumns(spec);
+    // ctid identifies the row for deletion even on tables with no primary key
+    rows = await sql.query(
+      `SELECT ctid::text AS _ctid, * FROM ${spec.backing}
+       ORDER BY ${spec.orderBy || 'ctid'} LIMIT 500`
+    );
+  }
+  res.json({ columns, rows });
+}));
+
+app.post('/api/components/:key', requireAuth, wrap(async (req, res) => {
+  const spec = componentSpec(req.params.key);
+  if (!(await ensureComponentTable(spec))) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const columns = await componentColumns(spec);
+  const values = req.body?.values || {};
+  const filled = columns.filter(
+    (c) => !c.auto && values[c.name] !== undefined && values[c.name] !== null && values[c.name] !== ''
+  );
+  if (!filled.length) throw new Error('Fill in at least one field.');
+  const names = filled.map((c) => `"${c.name.replaceAll('"', '')}"`).join(', ');
+  const placeholders = filled.map((_, i) => `$${i + 1}`).join(', ');
+  const params = filled.map((c) =>
+    /int|numeric|double|real/.test(c.dataType) ? Number(values[c.name]) : String(values[c.name])
+  );
+  if (params.some((v) => typeof v === 'number' && !Number.isFinite(v))) {
+    throw new Error('Numeric fields must contain numbers.');
+  }
+  await sql.query(`INSERT INTO ${spec.backing} (${names}) VALUES (${placeholders})`, params);
+  res.json({ ok: true });
+}));
+
+// Inline cell edits from the grid — update one row (found by ctid) in place.
+// Note ctids change on UPDATE, so the client refetches after every save.
+app.put('/api/components/:key', requireAuth, wrap(async (req, res) => {
+  const spec = componentSpec(req.params.key);
+  const ctid = String(req.body?.ctid || '');
+  if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
+  if (!(await ensureComponentTable(spec))) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const columns = await componentColumns(spec);
+  const values = req.body?.values || {};
+  const sets = columns.filter((c) => !c.auto && values[c.name] !== undefined);
+  if (!sets.length) throw new Error('Nothing to update.');
+  const assignments = sets
+    .map((c, i) => `"${c.name.replaceAll('"', '')}" = $${i + 1}`)
+    .join(', ');
+  const params = sets.map((c) => {
+    const v = values[c.name];
+    if (v === null || v === '') return null;
+    return /int|numeric|double|real/.test(c.dataType) ? Number(v) : String(v);
+  });
+  if (params.some((v) => typeof v === 'number' && !Number.isFinite(v))) {
+    throw new Error('Numeric fields must contain numbers.');
+  }
+  await sql.query(
+    `UPDATE ${spec.backing} SET ${assignments} WHERE ctid = $${sets.length + 1}::tid`,
+    [...params, ctid]
+  );
+  res.json({ ok: true });
+}));
+
+app.delete('/api/components/:key', requireAuth, wrap(async (req, res) => {
+  const spec = componentSpec(req.params.key);
+  const ctid = String(req.body?.ctid || '');
+  if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
+  await sql.query(`DELETE FROM ${spec.backing} WHERE ctid = $1::tid`, [ctid]);
+  res.json({ ok: true });
+}));
+
 // ---------- Pipeline filter options ----------
 // Distinct pipeline (TSP) names per source, for the workflow "Configure
 // Components" picker. Prefers pinging the live source API; falls back to the
@@ -215,6 +451,18 @@ const SOURCE_PIPELINES = {
   firm: { path: '/api/firms', name: 'tspname', duns: 'tspduns' },
   interruptible: { path: '/api/interruptibles', name: 'tspname', duns: 'tspduns' },
   awards: { path: '/api/awards', name: 'transportationserviceprovidername', duns: null },
+  index: { path: '/api/ioc', name: 'pipe', duns: null }, // IOC calls the pipeline 'Pipe'
+};
+
+// Case-insensitive field lookup — the live API uses TitleCase (TspName), the
+// bronze tables lowercase everything (tspname).
+const pickField = (record, ...names) => {
+  const lower = Object.fromEntries(Object.keys(record).map((k) => [k.toLowerCase(), record[k]]));
+  for (const n of names) {
+    const v = n && lower[n.toLowerCase()];
+    if (v !== undefined && v !== null && v !== '') return v;
+  }
+  return null;
 };
 const SOURCE_API_BASE = process.env.SOURCE_API_BASE || 'http://localhost:8000';
 
@@ -230,13 +478,17 @@ app.get('/api/pipeline-options', requireAuth, wrap(async (req, res) => {
       clearTimeout(timer);
       if (resp.ok) {
         const body = await resp.json();
-        const records = Array.isArray(body) ? body : body.data || body.results || [];
+        // records may sit at the top level or under a wrapper key
+        // (contracts, awards, data, ...) — take the first array we find
+        const records = Array.isArray(body)
+          ? body
+          : Object.values(body).find(Array.isArray) || [];
         const spec = SOURCE_PIPELINES[key];
         const seen = new Map();
         for (const r of records) {
-          const name = r[spec.name] || r.tspname || r.TSPName || r.transportationserviceprovidername;
+          const name = pickField(r, spec.name, 'tspname', 'transportationserviceprovidername');
           if (name && !seen.has(name))
-            seen.set(name, { name, duns: (spec.duns && r[spec.duns]) || null });
+            seen.set(name, { name, duns: pickField(r, spec.duns, 'tspduns') });
         }
         if (seen.size) {
           options[key] = {

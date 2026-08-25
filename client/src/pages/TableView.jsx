@@ -1,27 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
-import { ModuleRegistry, AllCommunityModule, themeQuartz } from 'ag-grid-community';
 import { api, apiDownload } from '../api';
 import Header from '../components/Header';
+import { gridTheme } from '../grid-theme';
 import { buildGoldReport, describeFilterModel } from '../gold-report';
 import { pbiService, goldDatasetPayload, createReportConfig, editReportConfig, ensureStarterReport } from '../powerbi';
 
 const DOWNLOAD_FORMATS = ['csv', 'xlsx', 'parquet'];
-
-ModuleRegistry.registerModules([AllCommunityModule]);
-
-// Match the Value Creed look
-const gridTheme = themeQuartz.withParams({
-  accentColor: '#c05a1e',
-  headerBackgroundColor: '#1f2a44',
-  headerTextColor: '#ffffff',
-  fontFamily: "'Poppins', system-ui, sans-serif",
-  fontSize: 13,
-  headerFontWeight: 600,
-  borderRadius: 8,
-  wrapperBorderRadius: 12,
-});
 
 function formatCell(value) {
   if (value === null || value === undefined) return '—';

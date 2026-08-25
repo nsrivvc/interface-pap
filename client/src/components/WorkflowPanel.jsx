@@ -10,6 +10,7 @@ import {
   saveWorkflows,
 } from '../workflow-defs';
 import { FEED_WORKFLOW_FILES } from '../providers/index.js';
+import ComponentsConfig from './ComponentsConfig';
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -47,169 +48,6 @@ const jobState = (status, conclusion) =>
 // An in-flight dispatch survives page navigation/refresh via localStorage, so
 // the card keeps updating (and records the outcome) after coming back.
 const ACTIVE_RUN_KEY = 'pap_active_run_v1';
-
-// What a configured shipper does to the feed's raw table. `add` narrows the
-// raw table to that DUNS; `remove` drops that DUNS when the feed is processed.
-const SHIPPER_ACTIONS = [
-  { key: 'add', label: 'Add', hint: 'Filter the raw table to this DUNS' },
-  { key: 'remove', label: 'Remove', hint: 'Drop this DUNS from the raw table' },
-];
-
-// ---- Pipeline filter picker (Configure Components) ----
-// Lists each selected source's pipelines (TSP names) via /api/pipeline-options
-// — served from the live source API when it's up, otherwise from the
-// warehouse's bronze rows — and lets the user pick which ones this workflow
-// keeps. Cached per source for the session.
-const pipelineOptionsCache = {};
-
-function PipelineFilterPicker({ sources, filters, onChange }) {
-  const [options, setOptions] = useState({});
-  const [status, setStatus] = useState('idle'); // idle | loading | error | ready
-  const [search, setSearch] = useState({}); // source -> filter text
-
-  useEffect(() => {
-    if (!sources.length) return;
-    const missing = sources.filter((k) => !pipelineOptionsCache[k]);
-    if (!missing.length) {
-      setOptions({ ...pipelineOptionsCache });
-      setStatus('ready');
-      return;
-    }
-    let stale = false;
-    setStatus('loading');
-    api(`/api/pipeline-options?sources=${missing.join(',')}`)
-      .then(({ options: got }) => {
-        Object.assign(pipelineOptionsCache, got);
-        if (!stale) {
-          setOptions({ ...pipelineOptionsCache });
-          setStatus('ready');
-        }
-      })
-      .catch(() => {
-        if (!stale) setStatus('error');
-      });
-    return () => {
-      stale = true;
-    };
-  }, [sources.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggle = (key, name) => {
-    const cur = filters[key] || [];
-    onChange({
-      ...filters,
-      [key]: cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
-    });
-  };
-  const setAll = (key, names) => onChange({ ...filters, [key]: names });
-
-  if (!sources.length) {
-    return (
-      <p className="pf-empty">
-        Select at least one source below — each source&apos;s pipeline list is pulled from its
-        API.
-      </p>
-    );
-  }
-  return (
-    <>
-      <p className="wf-note" style={{ marginBottom: 10 }}>
-        Click pipelines to keep them when a feed is processed — pick as many as you like per
-        source. A source with nothing selected lets every pipeline through.
-      </p>
-      {status === 'error' && (
-        <p className="wf-sources-warn">Couldn&apos;t load the pipeline lists — is the API running?</p>
-      )}
-      {sources.map((key) => {
-        const opt = options[key];
-        const all = opt?.pipelines || [];
-        const chosen = filters[key] || [];
-        const q = (search[key] || '').toLowerCase();
-        const shown = q ? all.filter((pl) => pl.name.toLowerCase().includes(q)) : all;
-        return (
-          <div key={key} className="pf-source">
-            <div className="pf-source-head">
-              <span className="pf-source-title">{sourceLabel(key)}</span>
-              <span className={`pf-count ${chosen.length ? 'active' : ''}`}>
-                {chosen.length
-                  ? `${chosen.length} of ${all.length} selected`
-                  : all.length
-                    ? `no filter — all ${all.length} flow through`
-                    : 'no filter'}
-              </span>
-              {opt?.from === 'warehouse' && (
-                <span
-                  className="pf-tag"
-                  title="The source API isn't reachable — this list comes from rows already ingested into the warehouse"
-                >
-                  from ingested data
-                </span>
-              )}
-              <span className="pf-links">
-                <button
-                  type="button"
-                  className="pf-link"
-                  disabled={!all.length || chosen.length === all.length}
-                  onClick={() => setAll(key, all.map((pl) => pl.name))}
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  className="pf-link"
-                  disabled={!chosen.length}
-                  onClick={() => setAll(key, [])}
-                >
-                  Clear
-                </button>
-              </span>
-            </div>
-            {all.length > 10 && (
-              <input
-                type="text"
-                className="pf-search"
-                placeholder={`Search ${sourceLabel(key)} pipelines…`}
-                value={search[key] || ''}
-                onChange={(e) => setSearch((sv) => ({ ...sv, [key]: e.target.value }))}
-              />
-            )}
-            {status === 'loading' && !opt ? (
-              <div className="pf-pills">
-                {[96, 138, 112, 150].map((w) => (
-                  <span key={w} className="pf-pill pf-skeleton" style={{ width: w }} />
-                ))}
-              </div>
-            ) : all.length ? (
-              <div className="pf-pills">
-                {shown.map((pl) => {
-                  const on = chosen.includes(pl.name);
-                  return (
-                    <button
-                      key={pl.name}
-                      type="button"
-                      className={`pf-pill ${on ? 'selected' : ''}`}
-                      title={pl.duns ? `DUNS ${pl.duns}` : pl.name}
-                      onClick={() => toggle(key, pl.name)}
-                    >
-                      <span className="pf-pill-mark">{on ? '✓' : '+'}</span>
-                      {pl.name}
-                    </button>
-                  );
-                })}
-                {!shown.length && (
-                  <span className="pf-empty">No pipelines match &quot;{search[key]}&quot;.</span>
-                )}
-              </div>
-            ) : (
-              <p className="pf-empty">
-                No pipelines found yet — run this source once and its pipelines appear here.
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
 
 const TIMEZONES = (() => {
   try {
@@ -258,41 +96,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
   const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
-  const [draftPipelineFilters, setDraftPipelineFilters] = useState({}); // source -> [TSP names]
-  const [draftShippers, setDraftShippers] = useState([]);
-  const [draftRecDels, setDraftRecDels] = useState([]);
-
-  // Shippers configured at setup time. Each row is one K-holder plus what to
-  // do with it: `add` filters the raw table to that DUNS, `remove` drops it.
-  const addDraftShipper = () =>
-    setDraftShippers((ss) => [
-      ...ss,
-      { id: Date.now(), kHolderName: '', kHolderNumber: '', action: 'add' },
-    ]);
-
-  const updateDraftShipper = (id, patch) =>
-    setDraftShippers((ss) => ss.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)));
-
-  const removeDraftShipper = (id) =>
-    setDraftShippers((ss) => ss.filter((sh) => sh.id !== id));
-
-  // Whether this K-holder is being added to the filter or removed from it.
-  const setDraftShipperAction = (id, action) => updateDraftShipper(id, { action });
-
-  // Rec-del pairs attached at setup time. Placeholder fields for now — how a
-  // pair feeds the Stage 4 pairing logic will be wired up later.
-  const addDraftRecDel = () =>
-    setDraftRecDels((rs) => [
-      ...rs,
-      { id: Date.now(), name: '', receipt: '', delivery: '', notes: '' },
-    ]);
-
-  const updateDraftRecDel = (id, patch) =>
-    setDraftRecDels((rs) => rs.map((rd) => (rd.id === id ? { ...rd, ...patch } : rd)));
-
-  const removeDraftRecDel = (id) =>
-    setDraftRecDels((rs) => rs.filter((rd) => rd.id !== id));
-
   // Run state:
   // { id, trigger, batchId, sourceStates, stageStates, github, githubRuns,
   //   githubDone, error, finished }
@@ -337,9 +140,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setDraftSources(ALL_SOURCE_KEYS);
     setDraftTime('');
     setDraftTz(LOCAL_TZ);
-    setDraftPipelineFilters({});
-    setDraftShippers([]);
-    setDraftRecDels([]);
   };
 
   const saveWorkflow = () => {
@@ -348,16 +148,9 @@ export default function WorkflowPanel({ onPipelineRan }) {
     // Keep sources in pipeline order regardless of click order
     const sources = ALL_SOURCE_KEYS.filter((k) => draftSources.includes(k));
     const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
-    // Drop pipeline rows the user added but left entirely blank
-    // Same for shipper rows — a shipper counts as filled if either field is set
-    const shippers = draftShippers.filter(
-      (sh) => sh.kHolderName.trim() || sh.kHolderNumber.trim()
-    );
-    // A pairing row counts as filled if it names either side of the pair
-    const recDels = draftRecDels.filter(
-      (rd) => rd.name.trim() || rd.receipt.trim() || rd.delivery.trim()
-    );
-    // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5
+    // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5.
+    // Components (pipelines, shippers, rec-del pairings) live in their own
+    // warehouse tables now, not on the workflow itself.
     const next = [
       ...workflows,
       {
@@ -366,9 +159,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
         stageCount: STAGE_DEFS.length,
         sources,
         schedule,
-        pipelineFilters: draftPipelineFilters,
-        shippers,
-        recDels,
       },
     ];
     setWorkflows(next);
@@ -393,52 +183,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
       sources: wf.sources,
       time: wf.schedule?.time || '',
       tz: wf.schedule?.tz || LOCAL_TZ,
-      pipelineFilters: wf.pipelineFilters || {},
-      shippers: wf.shippers || [],
-      recDels: wf.recDels || [],
     });
   };
-
-
-  // Shippers attached to a workflow. Placeholder fields for now — how a
-  // shipper scopes the workflow's data will be wired up later.
-  const addEditShipper = () =>
-    setEditDraft((d) => ({
-      ...d,
-      shippers: [
-        ...d.shippers,
-        { id: Date.now(), kHolderName: '', kHolderNumber: '', action: 'add' },
-      ],
-    }));
-
-  const updateEditShipper = (id, patch) =>
-    setEditDraft((d) => ({
-      ...d,
-      shippers: d.shippers.map((sh) => (sh.id === id ? { ...sh, ...patch } : sh)),
-    }));
-
-  const removeEditShipper = (id) =>
-    setEditDraft((d) => ({ ...d, shippers: d.shippers.filter((sh) => sh.id !== id) }));
-
-  // Whether this K-holder is being added to the filter or removed from it.
-  const setEditShipperAction = (id, action) => updateEditShipper(id, { action });
-
-  // Rec-del pairs attached to a workflow. Placeholder fields for now — how a
-  // pair feeds the Stage 4 pairing logic will be wired up later.
-  const addEditRecDel = () =>
-    setEditDraft((d) => ({
-      ...d,
-      recDels: [...d.recDels, { id: Date.now(), name: '', receipt: '', delivery: '', notes: '' }],
-    }));
-
-  const updateEditRecDel = (id, patch) =>
-    setEditDraft((d) => ({
-      ...d,
-      recDels: d.recDels.map((rd) => (rd.id === id ? { ...rd, ...patch } : rd)),
-    }));
-
-  const removeEditRecDel = (id) =>
-    setEditDraft((d) => ({ ...d, recDels: d.recDels.filter((rd) => rd.id !== id) }));
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -462,16 +208,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
             name: editDraft.name.trim() || w.name,
             sources: ALL_SOURCE_KEYS.filter((k) => editDraft.sources.includes(k)),
             schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
-            // Drop pipeline rows the user added but left entirely blank
-            pipelineFilters: editDraft.pipelineFilters || {},
-            // Same for shipper rows — filled if either field is set
-            shippers: editDraft.shippers.filter(
-              (sh) => sh.kHolderName.trim() || sh.kHolderNumber.trim()
-            ),
-            // A pairing row counts as filled if it names either side of the pair
-            recDels: editDraft.recDels.filter(
-              (rd) => rd.name.trim() || rd.receipt.trim() || rd.delivery.trim()
-            ),
           }
         : w
     );
@@ -503,18 +239,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const removeWorkflow = (id) => {
     if (run?.id === id) cancelRun();
     const next = workflows.filter((w) => w.id !== id);
-    setWorkflows(next);
-    saveWorkflows(next);
-  };
-
-  // Detach a shipper straight from the workflow card. Shippers saved earlier
-  // shouldn't need a trip through the editor just to be removed.
-  const removeShipper = (workflowId, shipperId) => {
-    const next = workflows.map((w) =>
-      w.id === workflowId
-        ? { ...w, shippers: (w.shippers || []).filter((sh) => sh.id !== shipperId) }
-        : w
-    );
     setWorkflows(next);
     saveWorkflows(next);
   };
@@ -789,149 +513,10 @@ export default function WorkflowPanel({ onPipelineRan }) {
             />
           </div>
 
-          {/* Configure Components — pipelines, shippers and rec-del pairings,
-              combined into one card. Pipeline filters are live; the rest are
-              placeholders wired up later. */}
-          <div className="wf-group-head">
-            <strong>Configure Components</strong>
-            <span className="muted">
-              pipeline filters, shippers and rec-del pairings for this workflow — all in one
-              place
-            </span>
-          </div>
-
-          <div className="wf-sources" style={{ marginTop: 0, borderLeftColor: 'var(--navy)' }}>
-            {/* Pipelines — pick which TSPs each selected source keeps */}
-            <div className="wf-sources-head">
-              <strong>Pipelines</strong>
-              <span className="muted">
-                filter each source down to specific pipelines — lists come from the source APIs
-              </span>
-            </div>
-            <PipelineFilterPicker
-              sources={draftSources}
-              filters={draftPipelineFilters}
-              onChange={setDraftPipelineFilters}
-            />
-
-            {/* Shippers — placeholder fields, scoping wired up later */}
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid #e6e8ef' }}>
-            <div className="wf-sources-head">
-              <strong>Shippers</strong>
-              <span className="muted">
-                attach shippers to this workflow — how they scope the data will be
-                configured later
-              </span>
-            </div>
-            <p className="wf-note">
-              Adding a shipper filters the raw table to that DUNS. Removing one drops that
-              DUNS from the raw table the next time the feed is processed.
-            </p>
-            {draftShippers.length === 0 && (
-              <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
-                No shippers configured yet.
-              </p>
-            )}
-            {draftShippers.map((sh) => (
-              <div key={sh.id} className="wf-pipeline-row">
-                <input
-                  type="text"
-                  placeholder="KHolderName"
-                  value={sh.kHolderName}
-                  onChange={(e) => updateDraftShipper(sh.id, { kHolderName: e.target.value })}
-                />
-                <input
-                  type="text"
-                  placeholder="KHolderNumber"
-                  value={sh.kHolderNumber}
-                  onChange={(e) => updateDraftShipper(sh.id, { kHolderNumber: e.target.value })}
-                />
-                <span className="wf-action-toggle" role="group" aria-label="Shipper action">
-                  {SHIPPER_ACTIONS.map((a) => (
-                    <button
-                      key={a.key}
-                      type="button"
-                      className={`wf-action-btn ${sh.action === a.key ? 'selected' : ''}`}
-                      title={a.hint}
-                      onClick={() => setDraftShipperAction(sh.id, a.key)}
-                    >
-                      {a.label}
-                    </button>
-                  ))}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-outline wf-row-remove"
-                  title="Discard this row"
-                  onClick={() => removeDraftShipper(sh.id)}
-                >
-                  ✕ Discard
-                </button>
-              </div>
-            ))}
-            <button type="button" className="btn btn-outline" onClick={addDraftShipper}>
-              + Configure Shipper
-            </button>
-          </div>
-
-            {/* Rec-del pairs — placeholder fields, Stage 4 wiring comes later */}
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid #e6e8ef' }}>
-            <div className="wf-sources-head">
-              <strong>Rec-Del Pairings</strong>
-              <span className="muted">
-                pair receipt and delivery locations for Stage 4 — how they feed the pairing
-                logic will be configured later
-              </span>
-            </div>
-            {draftRecDels.length === 0 && (
-              <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
-                No rec-del pairings added yet.
-              </p>
-            )}
-            {draftRecDels.map((rd) => (
-              <div key={rd.id} className="wf-pipeline-row">
-                <input
-                  type="text"
-                  placeholder="Pairing name"
-                  value={rd.name}
-                  onChange={(e) => updateDraftRecDel(rd.id, { name: e.target.value })}
-                />
-                <input
-                  type="text"
-                  className="wf-pipeline-target"
-                  placeholder="Receipt location"
-                  value={rd.receipt}
-                  onChange={(e) => updateDraftRecDel(rd.id, { receipt: e.target.value })}
-                />
-                <input
-                  type="text"
-                  className="wf-pipeline-target"
-                  placeholder="Delivery location"
-                  value={rd.delivery}
-                  onChange={(e) => updateDraftRecDel(rd.id, { delivery: e.target.value })}
-                />
-                <input
-                  type="text"
-                  className="wf-pipeline-notes"
-                  placeholder="Notes (optional)"
-                  value={rd.notes}
-                  onChange={(e) => updateDraftRecDel(rd.id, { notes: e.target.value })}
-                />
-                <button
-                  type="button"
-                  className="btn btn-outline wf-row-remove"
-                  title="Remove this pairing"
-                  onClick={() => removeDraftRecDel(rd.id)}
-                >
-                  ✕ Remove Pairing
-                </button>
-              </div>
-            ))}
-            <button type="button" className="btn btn-outline" onClick={addDraftRecDel}>
-              + Add Rec-Del Pairing
-            </button>
-          </div>
-          </div>
+          {/* Configure Components — each component (pipelines, shippers,
+              rec-del pairings, locations) is a warehouse table rendered in
+              AG Grid with an add-row form. Shared across workflows. */}
+          <ComponentsConfig />
 
           {/* Source pipelines to retrieve — the only switches on the form */}
           <div className="wf-sources" style={{ marginTop: 16 }}>
@@ -1072,135 +657,9 @@ export default function WorkflowPanel({ onPipelineRan }) {
                 {editDraft.sources.length === 0 && (
                   <p className="wf-sources-warn">Select at least one source.</p>
                 )}
-                <div className="wf-group-head" style={{ margin: '20px 0 4px' }}>
-                  <strong>Configure Components</strong>
-                  <span className="muted">
-                    pipeline filters, shippers and rec-del pairings for this workflow — all in
-                    one place
-                  </span>
+                <div style={{ margin: '20px 0 0' }}>
+                  <ComponentsConfig />
                 </div>
-                <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
-                  <strong>Pipelines</strong>
-                  <span className="muted">
-                    filter each source down to specific pipelines — lists come from the source
-                    APIs
-                  </span>
-                </div>
-                <PipelineFilterPicker
-                  sources={editDraft.sources}
-                  filters={editDraft.pipelineFilters}
-                  onChange={(pf) => setEditDraft((d) => ({ ...d, pipelineFilters: pf }))}
-                />
-                <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
-                  <strong>Shippers</strong>
-                  <span className="muted">
-                    attach shippers to this workflow — how they scope the data will be
-                    configured later
-                  </span>
-                </div>
-                <p className="wf-note">
-                  Adding a shipper filters the raw table to that DUNS. Removing one drops that
-                  DUNS from the raw table the next time the feed is processed.
-                </p>
-                {editDraft.shippers.length === 0 && (
-                  <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
-                    No shippers configured yet.
-                  </p>
-                )}
-                {editDraft.shippers.map((sh) => (
-                  <div key={sh.id} className="wf-pipeline-row">
-                    <input
-                      type="text"
-                      placeholder="KHolderName"
-                      value={sh.kHolderName}
-                      onChange={(e) => updateEditShipper(sh.id, { kHolderName: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      placeholder="KHolderNumber"
-                      value={sh.kHolderNumber}
-                      onChange={(e) => updateEditShipper(sh.id, { kHolderNumber: e.target.value })}
-                    />
-                    <span className="wf-action-toggle" role="group" aria-label="Shipper action">
-                      {SHIPPER_ACTIONS.map((a) => (
-                        <button
-                          key={a.key}
-                          type="button"
-                          className={`wf-action-btn ${sh.action === a.key ? 'selected' : ''}`}
-                          title={a.hint}
-                          onClick={() => setEditShipperAction(sh.id, a.key)}
-                        >
-                          {a.label}
-                        </button>
-                      ))}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn btn-outline wf-row-remove"
-                      title="Discard this row"
-                      onClick={() => removeEditShipper(sh.id)}
-                    >
-                      ✕ Discard
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="btn btn-outline" onClick={addEditShipper}>
-                  + Configure Shipper
-                </button>
-                <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
-                  <strong>Rec-Del Pairings</strong>
-                  <span className="muted">
-                    pair receipt and delivery locations for Stage 4 — how they feed the pairing
-                    logic will be configured later
-                  </span>
-                </div>
-                {editDraft.recDels.length === 0 && (
-                  <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.78rem', color: 'var(--slate)' }}>
-                    No rec-del pairings added yet.
-                  </p>
-                )}
-                {editDraft.recDels.map((rd) => (
-                  <div key={rd.id} className="wf-pipeline-row">
-                    <input
-                      type="text"
-                      placeholder="Pairing name"
-                      value={rd.name}
-                      onChange={(e) => updateEditRecDel(rd.id, { name: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      className="wf-pipeline-target"
-                      placeholder="Receipt location"
-                      value={rd.receipt}
-                      onChange={(e) => updateEditRecDel(rd.id, { receipt: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      className="wf-pipeline-target"
-                      placeholder="Delivery location"
-                      value={rd.delivery}
-                      onChange={(e) => updateEditRecDel(rd.id, { delivery: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      className="wf-pipeline-notes"
-                      placeholder="Notes (optional)"
-                      value={rd.notes}
-                      onChange={(e) => updateEditRecDel(rd.id, { notes: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-outline wf-row-remove"
-                      title="Remove this pairing"
-                      onClick={() => removeEditRecDel(rd.id)}
-                    >
-                      ✕ Remove Pairing
-                    </button>
-                  </div>
-                ))}
-                <button type="button" className="btn btn-outline" onClick={addEditRecDel}>
-                  + Add Rec-Del Pairing
-                </button>
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
                   <strong>Trigger time</strong>
                   <span className="muted">runs daily at this time — leave empty for manual-only</span>
@@ -1258,22 +717,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
                       {wf.stageCount} stage{wf.stageCount > 1 ? 's' : ''}
                     </span>
                   )}
-                  {Object.values(wf.pipelineFilters || {}).flat().length > 0 && (
-                    <span className="badge manual" style={{ marginLeft: 4 }}>
-                      {Object.values(wf.pipelineFilters).flat().length} pipeline filter
-                      {Object.values(wf.pipelineFilters).flat().length > 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {wf.shippers?.length > 0 && (
-                    <span className="badge manual" style={{ marginLeft: 4 }}>
-                      {wf.shippers.length} shipper{wf.shippers.length > 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {wf.recDels?.length > 0 && (
-                    <span className="badge manual" style={{ marginLeft: 4 }}>
-                      {wf.recDels.length} pairing{wf.recDels.length > 1 ? 's' : ''}
-                    </span>
-                  )}
                   {wf.schedule && (
                     <span className="badge scheduled" style={{ marginLeft: 6 }}>
                       scheduled
@@ -1301,30 +744,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   <div className="wf-schedule-line wf-schedule-none">
                     <span className="wf-schedule-clock">🕒</span>
                     No time selected
-                  </div>
-                )}
-                {wf.shippers?.length > 0 && (
-                  <div className="wf-attached-line">
-                    <span className="wf-attached-label">Shippers</span>
-                    {wf.shippers.map((sh) => (
-                      <span key={sh.id} className="wf-attached-chip">
-                        <span className={`wf-attached-sign ${sh.action === 'remove' ? 'out' : 'in'}`}>
-                          {sh.action === 'remove' ? '−' : '+'}
-                        </span>
-                        {sh.kHolderName || sh.kHolderNumber || 'Unnamed shipper'}
-                        {sh.kHolderName && sh.kHolderNumber && (
-                          <span className="wf-attached-meta">{sh.kHolderNumber}</span>
-                        )}
-                        <button
-                          type="button"
-                          className="badge-clear"
-                          title={`Remove ${sh.kHolderName || 'this shipper'}`}
-                          onClick={() => removeShipper(wf.id, sh.id)}
-                        >
-                          ✕
-                        </button>
-                      </span>
-                    ))}
                   </div>
                 )}
                 {wf.lastRun ? (
