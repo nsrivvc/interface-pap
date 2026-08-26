@@ -326,6 +326,21 @@ export default function ComponentsConfig() {
           <ComponentTable tableKey="shipping" viewerName="shipping" addLabel="+ Add Shipper" />
         </div>
 
+        {/* Locations — rows in public.location_purpose_code */}
+        <div className="cc-section">
+          <div className="wf-sources-head">
+            <strong>Locations</strong>
+            <span className="muted">
+              adding a location inserts a row into the Location Purpose Code Table
+            </span>
+          </div>
+          <ComponentTable
+            tableKey="location-purpose-code"
+            viewerName="location_purpose_code"
+            addLabel="+ Add Location"
+          />
+        </div>
+
         {/* Rec-del pairings — rows ARE the Stage 4 pairing JSON */}
         <div className="cc-section">
           <div className="wf-sources-head">
@@ -346,15 +361,6 @@ export default function ComponentsConfig() {
             addLabel="+ Add Pairing"
             jsonPreview
           />
-        </div>
-
-        {/* Locations — intentionally blank for now */}
-        <div className="cc-section">
-          <div className="wf-sources-head">
-            <strong>Locations</strong>
-            <span className="muted">add locations for this workflow — coming soon</span>
-          </div>
-          <p className="muted cc-placeholder">Nothing to configure here yet.</p>
         </div>
       </div>
     </>

@@ -174,3 +174,39 @@ SELECT * FROM (VALUES
   ('default', 0::bigint, 6, 'Alternating D-R-D', '^(D-R-D)+$')
 ) v("Pipeline", "DUNS", "Order", "Pattern", "Regex")
 WHERE NOT EXISTS (SELECT 1 FROM public.rec_del_pairings);
+
+-- Location purpose codes per pipeline, managed from Configure Components.
+-- DUNS stays text because it carries leading zeros ("054748041").
+CREATE TABLE IF NOT EXISTS public.location_purpose_code (
+  id                    serial PRIMARY KEY,
+  "Pipeline"            text,
+  "DUNS"                text,
+  "Loc_QTI"             text,
+  "StandardizedLocPurp" text,
+  "Source"              text
+);
+ALTER TABLE public.location_purpose_code ADD COLUMN IF NOT EXISTS "Pipeline" text;
+ALTER TABLE public.location_purpose_code ADD COLUMN IF NOT EXISTS "DUNS" text;
+ALTER TABLE public.location_purpose_code ADD COLUMN IF NOT EXISTS "Loc_QTI" text;
+ALTER TABLE public.location_purpose_code ADD COLUMN IF NOT EXISTS "StandardizedLocPurp" text;
+ALTER TABLE public.location_purpose_code ADD COLUMN IF NOT EXISTS "Source" text;
+
+-- Starter rows for the location purpose code table (seeded only when empty)
+INSERT INTO public.location_purpose_code
+  ("Pipeline", "DUNS", "Loc_QTI", "StandardizedLocPurp", "Source")
+SELECT * FROM (VALUES
+  ('Egan Hub Storage, LLC', '835460478', 'Delivery Location', 'Delivery Location', 'gTRAN FIRM'),
+  ('Eastern Gas Transmission and Storage, Inc.', '116025180', 'Injection Point', 'Injection Location', 'gINDEX IOC'),
+  ('EASTERN GAS TRANSMISSION AND STORAGE, INC.', '116025180', 'METERING LOCATION/DELIVERY LOCATION', NULL, 'gXCHANGE AWARDS'),
+  ('Tres Palacios Gas Storage', '791204600', NULL, NULL, 'gXCHANGE AWARDS'),
+  ('Columbia Gas Transmission, LLC', '054748041', 'METERING LOCATION/DELIVERY LOCATION', 'Delivery Location', 'gXCHANGE AWARDS'),
+  ('Golden Triangle Storage, Inc.', '808627587', 'Receipt Location', 'Receipt Location', 'gTRAN IT'),
+  ('Texas Gas Transmission, LLC', '115972101', 'Pipeline segment defined by 1 location', 'Receipt Location', 'gXCHANGE AWARDS'),
+  ('Bobcat Gas Storage', '614834559', 'Delivery Location', 'Delivery Location', 'gTRAN IT'),
+  ('Carolina Gas Transmission, LLC', '094992187', 'Delivery Point', 'Delivery Location', 'gINDEX IOC'),
+  ('Southeast Supply Header, LLC', '808264746', 'METERING LOCATION/DELIVERY LOCATION', 'Delivery Location', 'gXCHANGE AWARDS'),
+  ('Monroe Gas Storage Company, L.L.C.', '790550920', 'Delivery Point', 'Delivery Location', 'gINDEX IOC'),
+  ('Tres Palacios Gas Storage', '791204600', NULL, NULL, 'gXCHANGE AWARDS'),
+  ('East Tennessee Natural Gas, LLC', '007921323', 'RECEIPT METER LOCATION', 'Receipt Location', 'gXCHANGE AWARDS')
+) v("Pipeline", "DUNS", "Loc_QTI", "StandardizedLocPurp", "Source")
+WHERE NOT EXISTS (SELECT 1 FROM public.location_purpose_code);
