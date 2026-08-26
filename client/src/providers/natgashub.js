@@ -11,6 +11,11 @@ export default {
   // `lastStage` is where a feed's pipeline stops. IOC has no Stage 3-5 logic,
   // so it contributes no tables past Stage 2 and its end-to-end workflow is
   // just the ingest.
+  //
+  // `stage3Phases` marks a feed whose Stage 3 runs in phases — duplicates
+  // dropped, amendments applied and multi-part records decomposed, each landing
+  // its own table, before the standardized ones are built. A feed without it
+  // (Awards) goes straight to standardization.
   feeds: [
     {
       key: 'firm',
@@ -19,6 +24,7 @@ export default {
       sourcePipeline: 'NGH-gTran-Firms-API-Pipeline',
       workflowFile: 'firm(stage3_4_5).yml',
       lastStage: 5,
+      stage3Phases: true,
     },
     {
       key: 'interruptible',
@@ -27,6 +33,7 @@ export default {
       sourcePipeline: 'NGH-gTran-Interruptibles-API-Pipeline',
       workflowFile: 'interruptible(stage3_4_5).yml',
       lastStage: 5,
+      stage3Phases: true,
     },
     {
       key: 'awards',

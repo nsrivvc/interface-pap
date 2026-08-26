@@ -24,9 +24,15 @@ export const STAGE_TABLES = [
   {
     stage: 'Stage 3 — Silver Staging',
     tables: [
+      { name: 'firm_deduplicated', label: 'Firm — Deduplicated' },
+      { name: 'firm_amended', label: 'Firm — Amended' },
+      { name: 'firm_decomposed', label: 'Firm — Decomposed' },
       { name: 'firm_locations_standardized', label: 'Firm Locations — Standardized' },
       { name: 'firm_core_standardized', label: 'Firm Core — Standardized' },
       { name: 'firm_rates_standardized', label: 'Firm Rates — Standardized' },
+      { name: 'interruptible_deduplicated', label: 'Interruptible — Deduplicated' },
+      { name: 'interruptible_amended', label: 'Interruptible — Amended' },
+      { name: 'interruptible_decomposed', label: 'Interruptible — Decomposed' },
       { name: 'interruptible_locations_standardized', label: 'Interruptible Locations — Standardized' },
       { name: 'interruptible_core_standardized', label: 'Interruptible Core — Standardized' },
       { name: 'interruptible_rates_standardized', label: 'Interruptible Rates — Standardized' },

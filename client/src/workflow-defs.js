@@ -67,8 +67,27 @@ export function saveWorkflows(workflows) {
 const tablesForStage = (stage, build) =>
   Object.fromEntries(FEEDS.map((f) => [f.key, f.lastStage >= stage ? build(f.key) : []]));
 
-// Stage 3: Locations, Core and Rates standardized per source
+// The phases Stage 3 runs through, in order. Feeds that declare `stage3Phases`
+// (Firm and IT) clean their Bronze rows first — duplicates dropped, amendments
+// applied, multi-part records decomposed — each phase landing one table, and
+// only then standardize. Awards has no cleaning to do, so it only standardizes.
+export const STAGE3_PHASES = [
+  { key: 'deduplicated', label: 'Deduplication', match: (n) => n.endsWith('_deduplicated') },
+  { key: 'amended', label: 'Amendments', match: (n) => n.endsWith('_amended') },
+  { key: 'decomposed', label: 'Decomposition', match: (n) => n.endsWith('_decomposed') },
+  { key: 'standardized', label: 'Standardization', match: (n) => n.endsWith('_standardized') },
+];
+
+// The phases before standardization — one table per source, not per grain
+const STAGE3_PRE_PHASES = STAGE3_PHASES.filter((p) => p.key !== 'standardized');
+
+/** Does this source run the pre-standardization phases in Stage 3? */
+export const stage3Phased = (key) => Boolean(FEEDS.find((f) => f.key === key)?.stage3Phases);
+
+// Stage 3: the phase tables for the sources that have them, then Locations,
+// Core and Rates standardized per source
 export const STAGE3_SOURCE_TABLES = tablesForStage(3, (k) => [
+  ...(stage3Phased(k) ? STAGE3_PRE_PHASES.map((p) => `${k}_${p.key}`) : []),
   `${k}_locations_standardized`,
   `${k}_core_standardized`,
   `${k}_rates_standardized`,

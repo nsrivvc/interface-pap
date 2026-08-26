@@ -4,8 +4,10 @@ import { api } from '../api';
 import Header from '../components/Header';
 import {
   ALL_SOURCE_KEYS,
+  STAGE3_PHASES,
   loadWorkflows,
   shortSourceLabel,
+  stage3Phased,
   workflowStageSections,
 } from '../workflow-defs';
 
@@ -115,13 +117,20 @@ const STAGE2_GROUPS = [
 ];
 
 // IOC stops after Stage 2, so Stages 3-5 only group the other three sources.
-const STAGE3_GROUPS = [
-  { label: 'Firm', test: (n) => n.startsWith('firm_') },
-  { label: 'Interruptible', test: (n) => n.startsWith('interruptible_') },
-  { label: 'Awards', test: (n) => n.startsWith('awards_') },
+const SOURCE_GROUPS = [
+  { key: 'firm', label: 'Firm', test: (n) => n.startsWith('firm_') },
+  { key: 'interruptible', label: 'Interruptible', test: (n) => n.startsWith('interruptible_') },
+  { key: 'awards', label: 'Awards', test: (n) => n.startsWith('awards_') },
 ];
 
-const STAGE4_GROUPS = STAGE3_GROUPS;
+// Firm and IT run Stage 3 in phases, so their tables are listed phase by phase
+// (dedup → amendments → decomposition → standardization). Awards only
+// standardizes, so its group stays one flat list of cards.
+const STAGE3_GROUPS = SOURCE_GROUPS.map((g) =>
+  stage3Phased(g.key) ? { ...g, phases: STAGE3_PHASES } : g
+);
+
+const STAGE4_GROUPS = SOURCE_GROUPS;
 
 function CategorySection({ title, groups, names, tableIndex, icon }) {
   return (
@@ -145,11 +154,33 @@ function CategorySection({ title, groups, names, tableIndex, icon }) {
                   </a>
                 )}
               </div>
-              <div className="grid grid-tables-sm">
-                {members.map((n) => (
-                  <TableCard key={n} name={n} table={tableIndex[n]} icon={icon} />
-                ))}
-              </div>
+              {g.phases ? (
+                <div className="tv-phases">
+                  {g.phases.map((phase, i) => {
+                    const inPhase = members.filter((n) => phase.match(n));
+                    if (!inPhase.length) return null;
+                    return (
+                      <div key={phase.key} className="tv-phase">
+                        <div className="tv-phase-label">
+                          <span className="tv-phase-step">{i + 1}</span>
+                          {phase.label}
+                        </div>
+                        <div className="grid grid-tables-sm">
+                          {inPhase.map((n) => (
+                            <TableCard key={n} name={n} table={tableIndex[n]} icon={icon} />
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="grid grid-tables-sm">
+                  {members.map((n) => (
+                    <TableCard key={n} name={n} table={tableIndex[n]} icon={icon} />
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

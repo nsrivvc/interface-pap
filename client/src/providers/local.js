@@ -7,8 +7,8 @@ export default {
   key: 'local',
   label: 'Local mock API',
   feeds: [
-    { key: 'firm', label: 'Firm', shortLabel: 'Firm', sourcePipeline: 'Local-Mock-Firm-Pipeline', workflowFile: null, lastStage: 5 },
-    { key: 'interruptible', label: 'Interruptible', shortLabel: 'IT', sourcePipeline: 'Local-Mock-Interruptible-Pipeline', workflowFile: null, lastStage: 5 },
+    { key: 'firm', label: 'Firm', shortLabel: 'Firm', sourcePipeline: 'Local-Mock-Firm-Pipeline', workflowFile: null, lastStage: 5, stage3Phases: true },
+    { key: 'interruptible', label: 'Interruptible', shortLabel: 'IT', sourcePipeline: 'Local-Mock-Interruptible-Pipeline', workflowFile: null, lastStage: 5, stage3Phases: true },
     { key: 'awards', label: 'Awards', shortLabel: 'Awards', sourcePipeline: 'Local-Mock-Awards-Pipeline', workflowFile: null, lastStage: 5 },
     { key: 'index', label: 'Index of Customers', shortLabel: 'IOC', sourcePipeline: 'Local-Mock-IndexOfCustomers-Pipeline', workflowFile: null, lastStage: 2 },
   ],

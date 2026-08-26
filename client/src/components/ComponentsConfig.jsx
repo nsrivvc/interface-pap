@@ -7,8 +7,9 @@ import { gridTheme } from '../grid-theme';
 // ---- Configure Components ----
 // Each component is a real warehouse table shown in the same AG Grid the
 // Table Viewer uses, with AG Grid's own editing doing the data entry:
-//  - the striped row pinned to the top of each grid is the INPUT row — click
-//    it, type the values, then hit ＋ (or the Add button) to insert;
+//  - the striped row pinned to the bottom of each grid (right above its Add
+//    button) is the INPUT row — click it, type the values, then hit ＋ (or the
+//    Add button) to insert;
 //  - any existing cell is editable in place (click it) — committing the row
 //    (Enter / clicking away) saves the change straight to the table.
 // Columns come from the live table, so a column added in Neon shows up here
@@ -116,6 +117,9 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
 
   const columnDefs = useMemo(() => {
     if (!data) return [];
+    // The input row announces itself in its first cell ("＋ Add … — type here")
+    const firstEditable = data.columns.find((col) => !col.auto)?.name;
+    const addHint = `＋ ${addLabel.replace(/^\+\s*/, '')} — type here…`;
     return [
       ...data.columns.map((c) => ({
         field: c.name,
@@ -128,13 +132,20 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
         maxWidth: c.auto ? 90 : undefined,
         editable: !c.auto,
         valueGetter: (p) => numify(c, p.data?.[c.name]),
-        // The empty input row shows each column's name as its placeholder
+        // The empty input row shows "＋ Add … — type here" in its first cell
+        // and each column's name as the placeholder in the rest
         valueFormatter: (p) => {
-          if (p.node?.rowPinned) return blank(p.value) ? (c.auto ? '' : `${c.name}…`) : String(p.value);
+          if (p.node?.rowPinned) {
+            if (!blank(p.value)) return String(p.value);
+            if (c.auto) return '';
+            return c.name === firstEditable ? addHint : `${c.name}…`;
+          }
           return blank(p.value) ? '' : String(p.value);
         },
         cellClassRules: {
           'cc-input-placeholder': (p) => Boolean(p.node?.rowPinned) && blank(p.value),
+          'cc-input-hint': (p) =>
+            Boolean(p.node?.rowPinned) && blank(p.value) && c.name === firstEditable,
         },
       })),
       {
@@ -209,7 +220,8 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
               theme={gridTheme}
               rowData={data.rows}
               columnDefs={columnDefs}
-              pinnedTopRowData={[draftRef.current]}
+              pinnedTopRowData={[]}
+              pinnedBottomRowData={[draftRef.current]}
               editType="fullRow"
               singleClickEdit
               stopEditingWhenCellsLoseFocus
@@ -218,14 +230,14 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
               }}
               onRowValueChanged={onRowValueChanged}
               onCellValueChanged={(e) => {
-                if (e.node.rowPinned === 'top') setDraftTick((t) => t + 1);
+                if (e.node.rowPinned === 'bottom') setDraftTick((t) => t + 1);
               }}
               domLayout="autoHeight"
               pagination={data.rows.length > 10}
               paginationPageSize={10}
               paginationPageSizeSelector={[10, 25, 50]}
               enableCellTextSelection
-              overlayNoRowsTemplate="<span style='padding: 14px; color: #6b7487;'>No rows yet — type into the top row to add the first one.</span>"
+              overlayNoRowsTemplate="<span style='padding: 14px; color: #6b7487;'>No rows yet — type into the input row below to add the first one.</span>"
             />
           </div>
           <div className="cc-add-row">
@@ -234,7 +246,7 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
               className="btn btn-navy"
               disabled={saving || !draftFilled}
               onClick={addFromDraft}
-              title="Insert the values typed into the grid's top row"
+              title="Insert the values typed into the input row above"
             >
               {saving ? '⟳ Adding…' : addLabel}
             </button>
@@ -285,9 +297,9 @@ export default function ComponentsConfig() {
 
       <div className="wf-sources" style={{ marginTop: 0, borderLeftColor: 'var(--navy)' }}>
         <p className="wf-note">
-          Type into the striped top row of a grid and hit ＋ to add a row. Click any existing
-          cell to edit it in place — press Enter (or click away) and the change saves straight
-          to the warehouse table.
+          Type into the striped input row at the bottom of a grid — right above its Add button
+          — and hit ＋ to add the row. Click any existing cell to edit it in place; press
+          Enter (or click away) and the change saves straight to the warehouse table.
         </p>
 
         {/* Pipelines — rows in public.pipeline_attributes */}

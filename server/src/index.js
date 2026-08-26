@@ -67,6 +67,16 @@ const vt = (spec, name, label) =>
 
 const grains = (order, build) => FEEDS.flatMap((f) => order.map((g) => build(f, g)));
 
+// Stage 3 runs in phases for the feeds that declare `silverPhases` (Firm, IT):
+// duplicates dropped, amendments applied and multi-part records decomposed,
+// each landing one table, before the standardized tables are built. A feed
+// without them (Awards) contributes only its standardized tables.
+const SILVER_PHASES = [
+  { key: 'deduplicated', label: 'Deduplicated' },
+  { key: 'amended', label: 'Amended' },
+  { key: 'decomposed', label: 'Decomposed' },
+];
+
 const STAGE_TABLES = [
   {
     stage: 'Stage 1 — API to Raw',
@@ -80,13 +90,18 @@ const STAGE_TABLES = [
   },
   {
     stage: 'Stage 3 — Silver Staging',
-    tables: grains(['locations', 'core', 'rates'], (f, g) =>
-      vt(
-        f.tables.silverStaging?.[g],
-        `${f.key}_${g}_standardized`,
-        `${f.label} ${CAP[g]} — Standardized`
-      )
-    ).filter(Boolean),
+    tables: FEEDS.flatMap((f) => [
+      ...SILVER_PHASES.map((p) =>
+        vt(f.tables.silverPhases?.[p.key], `${f.key}_${p.key}`, `${f.label} — ${p.label}`)
+      ),
+      ...['locations', 'core', 'rates'].map((g) =>
+        vt(
+          f.tables.silverStaging?.[g],
+          `${f.key}_${g}_standardized`,
+          `${f.label} ${CAP[g]} — Standardized`
+        )
+      ),
+    ]).filter(Boolean),
   },
   {
     stage: 'Stage 4 — Rec-Del Pairing',

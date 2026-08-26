@@ -1014,6 +1014,40 @@ button {
 .tv-group.final .tv-group-label {
   color: var(--orange);
 }
+/* Stage 3 phases inside a source group — dedup, amendments, decomposition,
+   then standardization, each with its own tables */
+.tv-phases {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.tv-phase {
+  border-left: 2px solid rgba(31, 42, 68, 0.14);
+  padding-left: 12px;
+}
+.tv-phase-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--slate);
+}
+.tv-phase-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(31, 42, 68, 0.1);
+  color: var(--navy);
+  font-size: 0.65rem;
+  line-height: 1;
+}
 
 .grid-tables-sm {
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
@@ -1596,23 +1630,34 @@ td.json-cell {
 
 /* Pinned input row + inline editing */
 .cc-grid .ag-row-pinned {
-  background: #f4f7fd;
+  background: #fdf8f2;
+}
+/* Dashed divider above the input row so it reads as "add a new row here" */
+.cc-grid .ag-floating-bottom {
+  border-top: 2px dashed rgba(192, 90, 30, 0.45);
 }
 .cc-input-placeholder {
   color: #97a0b3;
   font-style: italic;
 }
+.cc-input-hint {
+  color: var(--orange);
+  font-style: normal;
+  font-weight: 600;
+}
 .cc-add-inline {
-  border: none;
-  background: none;
+  border: 1px solid var(--orange);
+  background: #fff;
   color: var(--orange);
   font-size: 1rem;
   font-weight: 700;
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  line-height: 1.2;
   line-height: 1;
 }
 .cc-add-inline:hover {
-  background: #fdf1e8;
+  background: var(--orange);
+  color: #fff;
 }

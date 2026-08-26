@@ -35,6 +35,12 @@ export default {
       workflows: { pipeline: 'firm(stage3_4_5).yml', ingest: 'bronze_ingest_firm.yml' },
       tables: {
         bronze: { table: 'bronze.gtran_firm', orderBy: 'bronze_row_id' },
+        // Stage 3 phases: one table each, in the order they run
+        silverPhases: {
+          deduplicated: { table: 'silver_staging.firm_deduplicated' },
+          amended: { table: 'silver_staging.firm_amended' },
+          decomposed: { table: 'silver_staging.firm_decomposed' },
+        },
         silverStaging: {
           locations: { table: 'silver_staging.firm_locations', orderBy: '"index"' },
           core: { table: 'silver_staging.firm_core', orderBy: 'bronze_row_id' },
@@ -59,6 +65,11 @@ export default {
       },
       tables: {
         bronze: { table: 'bronze.gtran_it', orderBy: 'bronze_row_id' },
+        silverPhases: {
+          deduplicated: { table: 'silver_staging.interruptible_deduplicated' },
+          amended: { table: 'silver_staging.interruptible_amended' },
+          decomposed: { table: 'silver_staging.interruptible_decomposed' },
+        },
         silverStaging: {
           locations: { table: 'silver_staging.interruptible_locations' },
           core: { table: 'silver_staging.interruptible_core' },
