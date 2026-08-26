@@ -5,7 +5,13 @@
   "type": "module",
   "description": "Value Creed styled data pipeline interface (React + Express + Neon)",
   "dependencies": {
-    "jsonwebtoken": "^9.0.2"
+    "@neondatabase/serverless": "^1.1.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "xlsx": "^0.18.5"
   },
   "scripts": {
     "dev": "concurrently -n server,client -c blue,yellow \"npm run dev --prefix server\" \"npm run dev --prefix client\"",

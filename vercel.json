@@ -2,6 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm install --prefix client && npm run build --prefix client",
   "outputDirectory": "client/dist",
+  "functions": {
+    "api/[[...path]].js": { "maxDuration": 60 }
+  },
   "rewrites": [
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]

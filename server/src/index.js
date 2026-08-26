@@ -685,12 +685,19 @@ app.put('/api/workflows/:id/schedule', requireAuth, wrap(async (req, res) => {
   res.json({ workflow });
 }));
 
-const port = process.env.PORT || 4000;
-app.listen(port, async () => {
-  console.log(`interface-pap API listening on http://localhost:${port}`);
-  try {
-    await reloadSchedules();
-  } catch (err) {
-    console.error('Could not load schedules (is the database initialized?):', err.message);
-  }
-});
+// On Vercel the app is exported and served by api/[[...path]].js — no listener,
+// and no interval scheduler (serverless invocations don't stay alive between
+// requests, so timers would never fire; run schedules locally or via a cron).
+export default app;
+
+if (!process.env.VERCEL) {
+  const port = process.env.PORT || 4000;
+  app.listen(port, async () => {
+    console.log(`interface-pap API listening on http://localhost:${port}`);
+    try {
+      await reloadSchedules();
+    } catch (err) {
+      console.error('Could not load schedules (is the database initialized?):', err.message);
+    }
+  });
+}
