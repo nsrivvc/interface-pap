@@ -3,9 +3,10 @@
   "buildCommand": "npm install --prefix client && npm run build --prefix client",
   "outputDirectory": "client/dist",
   "functions": {
-    "api/[[...path]].js": { "maxDuration": 60 }
+    "api/index.js": { "maxDuration": 60 }
   },
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
