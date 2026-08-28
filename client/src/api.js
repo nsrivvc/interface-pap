@@ -1,3 +1,6 @@
+// Tiny fetch wrapper used for every API call: attaches the saved login token,
+// parses JSON, and turns non-2xx responses into readable Errors. apiDownload
+// does the same for file downloads (CSV / XLSX / Parquet).
 const TOKEN_KEY = 'pap_token';
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY);

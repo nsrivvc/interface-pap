@@ -1,3 +1,4 @@
+// Top navigation bar: the four tabs, who is signed in, and log out.
 import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../auth-context';
 
@@ -12,6 +13,7 @@ export default function Header() {
         Pipeline Accelerator Program
       </Link>
       <nav className="header-nav">
+        <NavLink to="/reference">Reference Data</NavLink>
         <NavLink to="/" end>
           Contract Workflow Dashboard
         </NavLink>

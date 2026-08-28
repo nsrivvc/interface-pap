@@ -1,3 +1,5 @@
+// Sign-in form. The local admin (admin / 12345) always works; real accounts
+// live in Neon.
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth-context';

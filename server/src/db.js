@@ -1,3 +1,6 @@
+// The one Neon Postgres connection the whole server shares. If DATABASE_URL
+// is missing the app still boots in "local mode" — admin/12345 login, empty
+// tables — instead of crashing, which is handy for UI-only development.
 import 'dotenv/config';
 import { neon } from '@neondatabase/serverless';
 

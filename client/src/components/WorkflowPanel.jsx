@@ -1,4 +1,12 @@
+// The whole Contract Workflow Dashboard UI, in three parts:
+//   1. Scenarios panel — create/delete scenarios; each pins choices from the
+//      reference data (stored in Neon via /api/scenarios).
+//   2. Workflow setup/edit forms — name, ONE attached scenario (dropdown),
+//      sources to pull, optional daily trigger time (saved in localStorage).
+//   3. Run tracking — dispatches the real GitHub Actions pipelines and polls
+//      their run/job status into the stage pills until every feed finishes.
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import {
   STAGE_DEFS,
@@ -10,7 +18,6 @@ import {
   saveWorkflows,
 } from '../workflow-defs';
 import { FEED_WORKFLOW_FILES } from '../providers/index.js';
-import ComponentsConfig from './ComponentsConfig';
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -48,6 +55,16 @@ const jobState = (status, conclusion) =>
 // An in-flight dispatch survives page navigation/refresh via localStorage, so
 // the card keeps updating (and records the outcome) after coming back.
 const ACTIVE_RUN_KEY = 'pap_active_run_v1';
+
+// The reference data points a scenario pins — one dropdown each, fed by
+// /api/scenario-options from the live reference tables.
+const SCENARIO_FIELDS = [
+  { key: 'source', label: 'Source', single: true }, // one source API per scenario — no ＋
+  { key: 'pipeline', label: 'Pipeline' },
+  { key: 'shipper', label: 'Shipper' },
+  { key: 'location', label: 'Location' },
+  { key: 'pairing', label: 'Rec-Del Pairing' },
+];
 
 const TIMEZONES = (() => {
   try {
@@ -87,13 +104,117 @@ function nextRunIn(time, tz) {
   return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
 }
 
+// The reference points a scenario pins, shown under the scenario dropdowns
+function ScenarioSummary({ scenario }) {
+  if (!scenario?.config) return null;
+  const parts = SCENARIO_FIELDS.filter(
+    (f) => scenario.config[f.key] && scenario.config[f.key].length
+  );
+  if (!parts.length) return null;
+  return (
+    <div className="scenario-config-summary" style={{ marginTop: 8 }}>
+      {parts.map((f) => (
+        <span key={f.key}>
+          <em>{f.label}:</em>{' '}
+          {Array.isArray(scenario.config[f.key])
+            ? scenario.config[f.key].join(', ')
+            : scenario.config[f.key]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export default function WorkflowPanel({ onPipelineRan }) {
   const [workflows, setWorkflows] = useState(loadWorkflows);
+
+  // Scenarios — created here on the dashboard (stored in Neon), then attached
+  // to workflows. Their contents are defined later; today they're named
+  // configurations a workflow can reference.
+  const [scenarios, setScenarios] = useState([]);
+  const [scenarioName, setScenarioName] = useState('');
+  const [scenarioDesc, setScenarioDesc] = useState('');
+  // One stacked group per reference point, each holding one or more value
+  // dropdowns — ＋ beside the last dropdown adds another slot for that point
+  const emptyPicks = () => Object.fromEntries(SCENARIO_FIELDS.map((f) => [f.key, ['']]));
+  const [scenarioPicks, setScenarioPicks] = useState(emptyPicks);
+  const [scenarioOptions, setScenarioOptions] = useState(null); // dropdown choices
+  const [scenarioBusy, setScenarioBusy] = useState(false);
+  const [scenarioError, setScenarioError] = useState('');
+
+  const setPick = (key, i, value) =>
+    setScenarioPicks((p) => ({
+      ...p,
+      [key]: p[key].map((v, idx) => (idx === i ? value : v)),
+    }));
+  const addPick = (key) => setScenarioPicks((p) => ({ ...p, [key]: [...p[key], ''] }));
+  const removePick = (key, i) =>
+    setScenarioPicks((p) => ({ ...p, [key]: p[key].filter((_, idx) => idx !== i) }));
+
+  useEffect(() => {
+    api('/api/scenarios')
+      .then((d) => setScenarios(d.scenarios))
+      .catch((err) => setScenarioError(err.message));
+    api('/api/scenario-options')
+      .then((d) => setScenarioOptions(d.options))
+      .catch(() => {
+        // dropdowns just render empty — the create form still works
+      });
+  }, []);
+
+  const createScenario = async () => {
+    if (!scenarioName.trim() || scenarioBusy) return;
+    setScenarioBusy(true);
+    setScenarioError('');
+    try {
+      const { scenario } = await api('/api/scenarios', {
+        method: 'POST',
+        body: {
+          name: scenarioName.trim(),
+          description: scenarioDesc.trim(),
+          config: Object.fromEntries(
+            SCENARIO_FIELDS.map((f) => [f.key, scenarioPicks[f.key].filter(Boolean)]).filter(
+              ([, vals]) => vals.length
+            )
+          ),
+        },
+      });
+      setScenarios((s) => [...s, scenario]);
+      setScenarioName('');
+      setScenarioDesc('');
+      setScenarioPicks(emptyPicks());
+    } catch (err) {
+      setScenarioError(err.message);
+    } finally {
+      setScenarioBusy(false);
+    }
+  };
+
+  const deleteScenario = async (id) => {
+    setScenarioError('');
+    try {
+      await api(`/api/scenarios/${id}`, { method: 'DELETE' });
+      setScenarios((s) => s.filter((x) => x.id !== id));
+      // Detach the deleted scenario from any workflow still referencing it
+      setWorkflows((ws) => {
+        const next = ws.map((w) =>
+          w.scenarios?.includes(id)
+            ? { ...w, scenarios: w.scenarios.filter((x) => x !== id) }
+            : w
+        );
+        saveWorkflows(next);
+        return next;
+      });
+    } catch (err) {
+      setScenarioError(err.message);
+    }
+  };
 
   // Setup form
   const [configuring, setConfiguring] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
+  const [draftScenario, setDraftScenario] = useState(''); // one scenario id (as string)
   const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
   // Run state:
@@ -138,6 +259,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setConfiguring(false);
     setDraftName('');
     setDraftSources(ALL_SOURCE_KEYS);
+    setDraftScenario('');
     setDraftTime('');
     setDraftTz(LOCAL_TZ);
   };
@@ -158,6 +280,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
         name,
         stageCount: STAGE_DEFS.length,
         sources,
+        // Storage keeps the array shape; a workflow carries at most one scenario
+        scenarios: draftScenario ? [Number(draftScenario)] : [],
         schedule,
       },
     ];
@@ -181,6 +305,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setEditDraft({
       name: wf.name,
       sources: wf.sources,
+      scenario: String((wf.scenarios || [])[0] ?? ''),
       time: wf.schedule?.time || '',
       tz: wf.schedule?.tz || LOCAL_TZ,
     });
@@ -207,6 +332,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
             ...w,
             name: editDraft.name.trim() || w.name,
             sources: ALL_SOURCE_KEYS.filter((k) => editDraft.sources.includes(k)),
+            scenarios: editDraft.scenario ? [Number(editDraft.scenario)] : [],
             schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
           }
         : w
@@ -482,6 +608,136 @@ export default function WorkflowPanel({ onPipelineRan }) {
 
   return (
     <>
+    {/* ---- Scenarios — created here, attached to workflows below ---- */}
+    <div className="panel" style={{ marginBottom: 18 }}>
+      <div className="workflow-row" style={{ marginBottom: 6 }}>
+        <div>
+          <span className="eyebrow">Planning</span>
+          <h2 style={{ marginBottom: 0 }}>Scenarios</h2>
+        </div>
+      </div>
+      <p className="muted" style={{ margin: '4px 0 14px', color: 'var(--slate)' }}>
+        A scenario pins one choice per reference data point. Pick from the dropdowns —
+        fed by the tables on the <Link to="/reference">Reference Data</Link> tab — save
+        the scenario, then attach it to a workflow below and set its automatic times.
+      </p>
+      {scenarioError && <div className="status-line err">{scenarioError}</div>}
+      <div className="scenario-create">
+        <input
+          type="text"
+          placeholder="Scenario name"
+          value={scenarioName}
+          onChange={(e) => setScenarioName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && createScenario()}
+        />
+        <input
+          type="text"
+          className="scenario-desc-input"
+          placeholder="Description (optional)"
+          value={scenarioDesc}
+          onChange={(e) => setScenarioDesc(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && createScenario()}
+        />
+      </div>
+      <div className="scenario-rows">
+        {SCENARIO_FIELDS.map((f) => {
+          const picks = scenarioPicks[f.key] || [''];
+          const choices = scenarioOptions?.[f.key] || [];
+          return (
+            <div key={f.key} className="scenario-field-group">
+              <label>{f.label}</label>
+              {picks.map((val, i) => (
+                <div key={i} className="scenario-row">
+                  <select
+                    className="scenario-row-value"
+                    value={val}
+                    onChange={(e) => setPick(f.key, i, e.target.value)}
+                  >
+                    <option value="">— select —</option>
+                    {choices
+                      .filter((v) => v === val || !picks.includes(v))
+                      .map((v) => (
+                        <option key={v} value={v}>
+                          {v}
+                        </option>
+                      ))}
+                  </select>
+                  {picks.length > 1 && (
+                    <button
+                      type="button"
+                      className="cc-remove"
+                      title={`Remove this ${f.label.toLowerCase()}`}
+                      onClick={() => removePick(f.key, i)}
+                    >
+                      ✕
+                    </button>
+                  )}
+                  {!f.single && i === picks.length - 1 && (
+                    <button
+                      type="button"
+                      className="scenario-add-row"
+                      title={`Add another ${f.label.toLowerCase()}`}
+                      disabled={!val || picks.length >= choices.length}
+                      onClick={() => addPick(f.key)}
+                    >
+                      ＋
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <button
+          className="btn btn-navy"
+          disabled={!scenarioName.trim() || scenarioBusy}
+          onClick={createScenario}
+        >
+          {scenarioBusy ? '⟳ Saving…' : 'Save Scenario'}
+        </button>
+      </div>
+      {scenarios.length > 0 ? (
+        <div className="scenario-list">
+          {scenarios.map((s) => (
+            <div key={s.id} className="scenario-item">
+              <div style={{ flex: 1 }}>
+                <strong>{s.name}</strong>
+                {s.description && <span className="muted"> — {s.description}</span>}
+                {s.config && (
+                  <div className="scenario-config-summary">
+                    {SCENARIO_FIELDS.filter(
+                      (f) => s.config[f.key] && s.config[f.key].length
+                    ).map((f) => (
+                      <span key={f.key}>
+                        <em>{f.label}:</em>{' '}
+                        {Array.isArray(s.config[f.key])
+                          ? s.config[f.key].join(', ')
+                          : s.config[f.key]}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="cc-remove"
+                title="Delete this scenario"
+                onClick={() => deleteScenario(s.id)}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted" style={{ color: 'var(--slate)', fontSize: '0.8rem', margin: 0 }}>
+          No scenarios yet — name one above to create it.
+        </p>
+      )}
+    </div>
+
     <div className="panel">
       <div className="workflow-row" style={{ marginBottom: 16 }}>
         <div>
@@ -513,10 +769,38 @@ export default function WorkflowPanel({ onPipelineRan }) {
             />
           </div>
 
-          {/* Configure Components — each component (pipelines, shippers,
-              rec-del pairings, locations) is a warehouse table rendered in
-              AG Grid with an add-row form. Shared across workflows. */}
-          <ComponentsConfig />
+          {/* Scenario to attach (one per workflow) — the reference data
+              itself is maintained on the Reference Data tab now */}
+          <div className="wf-sources" style={{ marginTop: 16, borderLeftColor: 'var(--navy)' }}>
+            <div className="wf-sources-head">
+              <strong>Scenario</strong>
+              <span className="muted">attach one saved scenario to this workflow</span>
+            </div>
+            {scenarios.length === 0 ? (
+              <p className="muted" style={{ color: 'var(--slate)', fontSize: '0.8rem', margin: 0 }}>
+                No scenarios yet — create one in the Scenarios panel above.
+              </p>
+            ) : (
+              <>
+                <select
+                  className="wf-scenario-select"
+                  value={draftScenario}
+                  onChange={(e) => setDraftScenario(e.target.value)}
+                >
+                  <option value="">— no scenario —</option>
+                  {scenarios.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.description ? ` — ${s.description}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <ScenarioSummary
+                  scenario={scenarios.find((s) => String(s.id) === draftScenario)}
+                />
+              </>
+            )}
+          </div>
 
           {/* Source pipelines to retrieve — the only switches on the form */}
           <div className="wf-sources" style={{ marginTop: 16 }}>
@@ -657,9 +941,36 @@ export default function WorkflowPanel({ onPipelineRan }) {
                 {editDraft.sources.length === 0 && (
                   <p className="wf-sources-warn">Select at least one source.</p>
                 )}
-                <div style={{ margin: '20px 0 0' }}>
-                  <ComponentsConfig />
+                <div className="wf-sources-head" style={{ margin: '20px 0 8px' }}>
+                  <strong>Scenario</strong>
+                  <span className="muted">attach one saved scenario to this workflow</span>
                 </div>
+                {scenarios.length === 0 ? (
+                  <p className="muted" style={{ color: 'var(--slate)', fontSize: '0.8rem', margin: 0 }}>
+                    No scenarios yet — create one in the Scenarios panel above.
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      className="wf-scenario-select"
+                      value={editDraft.scenario}
+                      onChange={(e) =>
+                        setEditDraft((d) => ({ ...d, scenario: e.target.value }))
+                      }
+                    >
+                      <option value="">— no scenario —</option>
+                      {scenarios.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                          {s.description ? ` — ${s.description}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <ScenarioSummary
+                      scenario={scenarios.find((s) => String(s.id) === editDraft.scenario)}
+                    />
+                  </>
+                )}
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
                   <strong>Trigger time</strong>
                   <span className="muted">runs daily at this time — leave empty for manual-only</span>
@@ -717,6 +1028,14 @@ export default function WorkflowPanel({ onPipelineRan }) {
                       {wf.stageCount} stage{wf.stageCount > 1 ? 's' : ''}
                     </span>
                   )}
+                  {(wf.scenarios || [])
+                    .map((id) => scenarios.find((s) => s.id === id))
+                    .filter(Boolean)
+                    .map((s) => (
+                      <span key={s.id} className="badge scenario" style={{ marginLeft: 4 }}>
+                        {s.name}
+                      </span>
+                    ))}
                   {wf.schedule && (
                     <span className="badge scheduled" style={{ marginLeft: 6 }}>
                       scheduled

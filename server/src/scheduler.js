@@ -1,3 +1,7 @@
+// Interval scheduler for workflows saved with "run every N minutes": one
+// timer per enabled workflow, rebuilt whenever schedules change. Only works
+// on a long-lived server (local dev) — on Vercel nothing stays alive between
+// requests, so these timers never fire there.
 import { sql } from './db.js';
 import { runFullPipeline } from './pipeline.js';
 

@@ -1,15 +1,19 @@
-// Vercel entry point: every /api/* request runs the SAME Express app as local
-// dev (server/src/index.js) against the same Neon database — full parity
-// instead of the old no-database demo handlers that lived in this folder.
+// Vercel's doorway to the backend.
 //
-// Routing: vercel.json rewrites "/api/(.*)" to this function. Vercel hands the
-// function the ORIGINAL request URL (/api/auth/login, /api/components/…), so
-// the Express routes match unchanged. Express apps are (req, res) handlers,
-// so the app itself is the function.
+// Vercel turns any file in api/ into a serverless function: it takes the
+// file's default export and calls it as handler(req, res) for each request.
+// The import below RUNS server/src/index.js, which builds the Express app
+// with every route registered — and since an Express app is itself a
+// (req, res) function, exporting it is all Vercel needs.
+//
+// Flow: the deployed React site (static files in the browser) calls
+// /api/... → vercel.json rewrites it here → Express matches the route →
+// queries Neon → sends back the JSON the UI renders. Same code as local
+// dev, so hosted and local behavior never drift.
 //
 // Requires the server's env vars in the Vercel project settings:
-//   DATABASE_URL, JWT_SECRET, GITHUB_TOKEN, PIPELINE_GITHUB_REPO,
-//   PIPELINE_GITHUB_REF, POWERBI_* (optional), SOURCE_API_BASE (optional).
+// DATABASE_URL, JWT_SECRET, GITHUB_TOKEN, PIPELINE_GITHUB_REPO/REF,
+// POWERBI_* (optional), SOURCE_API_BASE (optional).
 import app from '../server/src/index.js';
 
 export default app;

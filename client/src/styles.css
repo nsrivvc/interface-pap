@@ -1,3 +1,7 @@
+/* All of the app's styling — one plain CSS file, no framework. Organized in
+   banner-commented sections: theme variables, header, panels, workflow chips,
+   scenario panel, Configure Components grids, and so on. */
+
 /* ---- Value Creed theme ---- */
 :root {
   --navy: #1f2a44;
@@ -319,6 +323,149 @@ button {
 .badge.running { background: #fdf0e5; color: var(--orange); }
 .badge.scheduled { background: #e7ecf6; color: var(--navy); }
 .badge.manual { background: #eef1f6; color: var(--slate); }
+.badge.scenario { background: #e8eefc; color: #274690; text-transform: none; letter-spacing: 0; }
+
+/* ---- Scenarios panel (dashboard) ---- */
+.scenario-create {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.scenario-create input {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  min-width: 200px;
+}
+.scenario-create input:focus {
+  outline: none;
+  border-color: var(--orange);
+}
+.scenario-create .scenario-desc-input {
+  flex: 1;
+  min-width: 240px;
+}
+.scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.scenario-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfcfe;
+  font-size: 0.85rem;
+}
+.scenario-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.scenario-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.scenario-row select {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  background: #fff;
+  color: var(--navy);
+}
+.scenario-row select:focus {
+  outline: none;
+  border-color: var(--orange);
+}
+.scenario-row select:disabled {
+  color: var(--slate);
+  background: #f4f6fa;
+}
+.scenario-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.scenario-field-group > label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--slate);
+}
+.scenario-row-value {
+  flex: 1;
+  min-width: 260px;
+  max-width: 560px;
+}
+.scenario-add-row {
+  width: 34px;
+  height: 34px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--navy);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.scenario-add-row:hover:not(:disabled) {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+.scenario-add-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.wf-scenario-select {
+  width: 100%;
+  max-width: 440px;
+  padding: 11px 42px 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--navy);
+  background: #fff
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%231f2a44' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 15px center;
+  background-size: 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.wf-scenario-select:hover {
+  border-color: var(--navy);
+}
+.wf-scenario-select:focus {
+  outline: none;
+  border-color: var(--orange);
+  box-shadow: 0 0 0 3px rgba(224, 122, 58, 0.15);
+}
+.scenario-config-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--slate);
+}
+.scenario-config-summary em {
+  font-style: normal;
+  font-weight: 600;
+}
 
 /* ---- Workflow setup (step chips) ---- */
 .wf-chip-row {
@@ -1548,6 +1695,162 @@ td.json-cell {
   font-size: 0.76rem;
   color: var(--slate);
   margin: 4px 0 0;
+}
+
+/* ---- Configure Source (radio cards) ---- */
+.cc-source-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.cc-source-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+.cc-source-option:hover {
+  background: #f7f9fd;
+}
+.cc-source-option.selected {
+  border-color: var(--orange);
+  background: #fff8f2;
+  box-shadow: 0 0 0 1px var(--orange) inset;
+}
+.cc-source-option input[type='radio'] {
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--orange);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cc-source-name {
+  font-weight: 700;
+  color: var(--navy);
+}
+.cc-source-desc {
+  display: block;
+  font-weight: 400;
+  color: var(--slate);
+  font-size: 0.75rem;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.cc-source-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--slate);
+}
+
+/* ---- Collapsible Configure Components sections ---- */
+.cc-collapsible-head {
+  cursor: pointer;
+  user-select: none;
+}
+.cc-collapse-btn {
+  margin-left: auto;
+  color: var(--slate);
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.cc-collapsible-head:hover .cc-collapse-btn {
+  color: var(--navy);
+}
+
+/* ---- Source credentials (badge + inline form) ---- */
+.cc-cred-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 8px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.cc-cred-badge.connected {
+  color: #116329;
+  background: #e3f5e9;
+}
+.cc-cred-badge.failed {
+  color: #a52a21;
+  background: #fdeeee;
+}
+.cc-cred-badge.unconfigured {
+  color: var(--slate);
+  background: #eef1f6;
+}
+.cc-cred-link {
+  display: inline-block;
+  margin-top: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.73rem;
+  font-weight: 600;
+  color: var(--navy);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cc-cred-link:hover {
+  color: var(--orange);
+}
+.cc-cred-form {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+.cc-cred-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+}
+.cc-cred-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.cc-cred-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.cc-cred-checked {
+  margin: 10px 0 0;
+  font-size: 0.73rem;
+  color: var(--slate);
+}
+.cc-source-test {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 18px;
+}
+.cc-source-test-result {
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+.cc-source-test-result.connected {
+  color: #116329;
+}
+.cc-source-test-result.failed {
+  color: #a52a21;
 }
 
 /* ---- Configure Components grids (AG Grid over the reference tables) ---- */

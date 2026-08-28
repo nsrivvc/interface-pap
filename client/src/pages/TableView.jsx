@@ -1,3 +1,6 @@
+// One warehouse table's rows in AG Grid: filter/search, CSV/XLSX/Parquet
+// downloads, and report generation from exactly the filtered slice — either
+// the native "gold" HTML report or an embedded Power BI report.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';

@@ -1,4 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+// The Reference Data tab's UI, in three building blocks:
+//   Section        — a collapsible block (open/closed remembered per browser)
+//   SourceConfig   — pick the source API, enter credentials, test connections
+//   ComponentTable — one editable AG Grid over a reference warehouse table
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
 import { api } from '../api';
@@ -284,72 +288,455 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
   );
 }
 
+// ---- Collapsible section ----
+// Every Configure Components block tucks away behind the arrow in its header
+// (the whole header toggles). The open/closed choice sticks per browser via
+// localStorage, and a collapsed grid doesn't fetch until first expanded.
+function Section({ id, title, hint, defaultOpen = false, right, first, children }) {
+  const storageKey = `cc-open:${id}`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored === null ? defaultOpen : stored === '1';
+    } catch {
+      return defaultOpen;
+    }
+  });
+  const toggle = () =>
+    setOpen((o) => {
+      try {
+        localStorage.setItem(storageKey, o ? '0' : '1');
+      } catch {
+        // storage unavailable — the section still toggles, just isn't remembered
+      }
+      return !o;
+    });
+  return (
+    <div className={first ? undefined : 'cc-section'}>
+      <div
+        className="wf-sources-head cc-collapsible-head"
+        style={open ? undefined : { marginBottom: 0 }}
+        onClick={toggle}
+        role="button"
+        aria-expanded={open}
+      >
+        <strong>{title}</strong>
+        <span className="muted">{hint}</span>
+        {right}
+        <span className="cc-collapse-btn" title={open ? 'Collapse' : 'Expand'}>
+          {open ? '▾' : '▸'}
+        </span>
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
+// ---- Configure Source ----
+// Which upstream API the workflow's source JSONs come from — a single-row
+// warehouse setting (public.source_config) saved the moment an option is
+// picked. NatGasHub and Cortex take per-source credentials (base URL +
+// key/username), verified against the API the moment they are saved; the
+// outcome shows as a connected/failed badge on the card. Configuration only
+// for now: retrieval still runs against the Mock-Up NatGasHub API until the
+// other sources are wired up.
+function SourceConfig() {
+  const [config, setConfig] = useState(null); // { source, options }
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const radioGroup = useId(); // two ComponentsConfig instances can be mounted
+
+  // Credentials editor — which source's form is open, its draft and progress
+  const [credOpen, setCredOpen] = useState('');
+  const [credDraft, setCredDraft] = useState({ baseUrl: '', username: '', apiKey: '' });
+  const [credBusy, setCredBusy] = useState(''); // '' | 'save' | 'verify' | 'remove'
+  const [credError, setCredError] = useState('');
+
+  useEffect(() => {
+    api('/api/source-config')
+      .then((d) => {
+        setConfig(d);
+        setError('');
+      })
+      .catch((err) => setError(err.message));
+  }, []);
+
+  // Test the SELECTED source's connection — the mock is pinged directly, the
+  // real sources are re-verified with their stored credentials.
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null); // { label, status, detail }
+
+  const testSelected = async () => {
+    if (!config || testing) return;
+    const opt = config.options.find((o) => o.key === config.source);
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const { connection } = await api(`/api/source-config/${config.source}/verify`, {
+        method: 'POST',
+      });
+      if (opt?.needsCredentials) applyConnection(config.source, connection);
+      setTestResult({ label: opt?.label, status: connection.status, detail: connection.detail });
+    } catch (err) {
+      setTestResult({ label: opt?.label, status: 'failed', detail: err.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const choose = async (key) => {
+    if (!config || key === config.source || saving) return;
+    const prev = config.source;
+    setConfig({ ...config, source: key });
+    setCredOpen(''); // credentials belong to the selected source — close any open form
+    setTestResult(null);
+    setSaving(true);
+    setSaved(false);
+    setError('');
+    try {
+      await api('/api/source-config', { method: 'PUT', body: { source: key } });
+      setSaved(true);
+    } catch (err) {
+      setConfig((c) => ({ ...c, source: prev }));
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const applyConnection = (key, connection) =>
+    setConfig((c) => ({
+      ...c,
+      options: c.options.map((o) => (o.key === key ? { ...o, connection } : o)),
+    }));
+
+  const toggleCreds = (key) => {
+    if (credOpen === key) {
+      setCredOpen('');
+      return;
+    }
+    const conn = config?.options.find((o) => o.key === key)?.connection;
+    setCredDraft({ baseUrl: conn?.baseUrl || '', username: conn?.username || '', apiKey: '' });
+    setCredError('');
+    setCredOpen(key);
+  };
+
+  const saveCreds = async () => {
+    if (credBusy) return;
+    setCredBusy('save');
+    setCredError('');
+    try {
+      const { connection } = await api(`/api/source-config/${credOpen}/credentials`, {
+        method: 'PUT',
+        body: credDraft,
+      });
+      applyConnection(credOpen, connection);
+      setCredDraft((d) => ({ ...d, apiKey: '' })); // the key now lives server-side only
+    } catch (err) {
+      setCredError(err.message);
+    } finally {
+      setCredBusy('');
+    }
+  };
+
+  const testCreds = async () => {
+    if (credBusy) return;
+    setCredBusy('verify');
+    setCredError('');
+    try {
+      const { connection } = await api(`/api/source-config/${credOpen}/verify`, {
+        method: 'POST',
+      });
+      applyConnection(credOpen, connection);
+    } catch (err) {
+      setCredError(err.message);
+    } finally {
+      setCredBusy('');
+    }
+  };
+
+  const removeCreds = async () => {
+    if (credBusy) return;
+    setCredBusy('remove');
+    setCredError('');
+    try {
+      await api(`/api/source-config/${credOpen}/credentials`, { method: 'DELETE' });
+      applyConnection(credOpen, {
+        configured: false,
+        status: null,
+        detail: null,
+        verifiedAt: null,
+        baseUrl: '',
+        username: '',
+        hasKey: false,
+      });
+      setCredDraft({ baseUrl: '', username: '', apiKey: '' });
+    } catch (err) {
+      setCredError(err.message);
+    } finally {
+      setCredBusy('');
+    }
+  };
+
+  const badge = (o) => {
+    if (!o.needsCredentials) return null;
+    const conn = o.connection;
+    if (conn?.status === 'connected') {
+      return (
+        <span className="cc-cred-badge connected" title={conn.detail || ''}>
+          ● connected
+        </span>
+      );
+    }
+    if (conn?.status === 'failed') {
+      return (
+        <span className="cc-cred-badge failed" title={conn.detail || ''}>
+          ✕ failed
+        </span>
+      );
+    }
+    return <span className="cc-cred-badge unconfigured">not connected</span>;
+  };
+
+  const openOpt = config?.options.find((o) => o.key === credOpen);
+
+  return (
+    <Section
+      id="source"
+      title="Source"
+      hint="which API the workflow retrieves its source JSONs from"
+      defaultOpen
+      first
+      right={
+        (saving && <span className="cc-source-state">⟳ saving…</span>) ||
+        (saved && <span className="cc-source-state">✓ saved</span>) ||
+        null
+      }
+    >
+      {error && <div className="status-line err">{error}</div>}
+      {!config && !error && <p className="muted cc-loading">Loading source…</p>}
+      {config && (
+        <>
+          <div className="cc-source-options" role="radiogroup" aria-label="Source API">
+            {config.options.map((o) => (
+              <label
+                key={o.key}
+                className={`cc-source-option${config.source === o.key ? ' selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name={radioGroup}
+                  checked={config.source === o.key}
+                  onChange={() => choose(o.key)}
+                />
+                <span>
+                  <span className="cc-source-name">
+                    {o.label} {badge(o)}
+                  </span>
+                  <span className="cc-source-desc">{o.description}</span>
+                  {/* Credentials are offered only for the SELECTED source, so
+                      e.g. picking the mock leaves no credential fields around */}
+                  {o.needsCredentials && config.source === o.key && (
+                    <button
+                      type="button"
+                      className="cc-cred-link"
+                      onClick={(e) => {
+                        e.preventDefault(); // don't flip the radio
+                        toggleCreds(o.key);
+                      }}
+                    >
+                      {credOpen === o.key
+                        ? 'hide credentials'
+                        : o.connection?.configured
+                          ? 'edit credentials'
+                          : 'add credentials'}
+                    </button>
+                  )}
+                </span>
+              </label>
+            ))}
+          </div>
+
+          {/* Only for the mock — the real sources have Test connection in
+              their credentials form instead */}
+          {!config.options.find((o) => o.key === config.source)?.needsCredentials && (
+            <div className="cc-source-test">
+              <button
+                type="button"
+                className="btn btn-outline"
+                disabled={testing}
+                onClick={testSelected}
+              >
+                {testing ? '⟳ Testing…' : '⚡ Test connection'}
+              </button>
+              {testResult && (
+                <span className={`cc-source-test-result ${testResult.status}`}>
+                  {testResult.status === 'connected' ? '●' : '✕'} {testResult.label}{' '}
+                  {testResult.status === 'connected' ? 'connected' : 'failed'} — {testResult.detail}
+                </span>
+              )}
+            </div>
+          )}
+
+          {openOpt && (
+            <div className="cc-cred-form">
+              <div className="cc-cred-head">
+                <strong>{openOpt.label} credentials</strong>
+                {openOpt.connection?.status === 'connected' && (
+                  <span className="cc-cred-badge connected">● {openOpt.label} connected</span>
+                )}
+                {openOpt.connection?.status === 'failed' && (
+                  <span className="cc-cred-badge failed">✕ {openOpt.connection.detail}</span>
+                )}
+              </div>
+              {credError && <div className="status-line err">{credError}</div>}
+              <div className="cc-cred-fields">
+                <div className="field">
+                  <label>API base URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://api.example.com"
+                    value={credDraft.baseUrl}
+                    onChange={(e) => setCredDraft((d) => ({ ...d, baseUrl: e.target.value }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>Username (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="only for APIs using basic auth"
+                    value={credDraft.username}
+                    onChange={(e) => setCredDraft((d) => ({ ...d, username: e.target.value }))}
+                  />
+                </div>
+                <div className="field">
+                  <label>API key / password</label>
+                  <input
+                    type="password"
+                    placeholder={
+                      openOpt.connection?.hasKey
+                        ? '•••••• saved — leave blank to keep'
+                        : 'paste the key or password'
+                    }
+                    value={credDraft.apiKey}
+                    onChange={(e) => setCredDraft((d) => ({ ...d, apiKey: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="cc-cred-actions">
+                <button
+                  type="button"
+                  className="btn btn-navy"
+                  disabled={Boolean(credBusy)}
+                  onClick={saveCreds}
+                >
+                  {credBusy === 'save' ? '⟳ Connecting…' : 'Save & Connect'}
+                </button>
+                {openOpt.connection?.configured && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    disabled={Boolean(credBusy)}
+                    onClick={testCreds}
+                  >
+                    {credBusy === 'verify' ? '⟳ Testing…' : 'Test connection'}
+                  </button>
+                )}
+                {openOpt.connection?.configured && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    disabled={Boolean(credBusy)}
+                    onClick={removeCreds}
+                  >
+                    {credBusy === 'remove' ? '⟳ Removing…' : 'Remove'}
+                  </button>
+                )}
+              </div>
+              {openOpt.connection?.verifiedAt && (
+                <p className="cc-cred-checked">
+                  Last checked {new Date(openOpt.connection.verifiedAt).toLocaleString()} —{' '}
+                  {openOpt.connection.detail}
+                </p>
+              )}
+            </div>
+          )}
+
+          <p className="wf-note">
+            The selected source decides which API the workflow&apos;s JSONs come from — Mock-Up
+            NatGasHub serves the mock API&apos;s JSON, the others theirs. NatGasHub and Cortex
+            need credentials: add them and the app checks the connection right away, marking
+            the source connected or failed. Retrieval currently runs against the Mock-Up
+            NatGasHub API; the other sources follow this setting once their APIs are wired up.
+          </p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 export default function ComponentsConfig() {
   return (
     <>
       <div className="wf-group-head">
         <strong>Configure Components</strong>
         <span className="muted">
-          pipelines, shippers, rec-del pairings and locations — each one lives in a warehouse
-          table you can add to right here
+          source, pipelines, shippers, rec-del pairings and locations — click a section header
+          to open it or tuck it away
         </span>
       </div>
 
       <div className="wf-sources" style={{ marginTop: 0, borderLeftColor: 'var(--navy)' }}>
-        <p className="wf-note">
-          Type into the striped input row at the bottom of a grid — right above its Add button
-          — and hit ＋ to add the row. Click any existing cell to edit it in place; press
-          Enter (or click away) and the change saves straight to the warehouse table.
-        </p>
+        {/* Source — which upstream API the JSONs come from */}
+        <SourceConfig />
 
         {/* Pipelines — rows in public.pipeline_attributes */}
-        <div className="wf-sources-head">
-          <strong>Pipelines</strong>
-          <span className="muted">
-            adding a pipeline inserts a row into the Pipeline Attribute Table
-          </span>
-        </div>
-        <ComponentTable
-          tableKey="pipeline-attributes"
-          viewerName="pipeline_attributes"
-          addLabel="+ Add Pipeline"
-        />
+        <Section
+          id="pipelines"
+          title="Pipelines"
+          hint="adding a pipeline inserts a row into the Pipeline Attribute Table"
+        >
+          <p className="wf-note">
+            Type into the striped input row at the bottom of the grid — right above its Add
+            button — and hit ＋ to add the row. Click any existing cell to edit it in place;
+            press Enter (or click away) and the change saves straight to the warehouse table.
+          </p>
+          <ComponentTable
+            tableKey="pipeline-attributes"
+            viewerName="pipeline_attributes"
+            addLabel="+ Add Pipeline"
+          />
+        </Section>
 
         {/* Shippers — rows in public.shipping */}
-        <div className="cc-section">
-          <div className="wf-sources-head">
-            <strong>Shippers</strong>
-            <span className="muted">
-              adding a shipper inserts a K-holder row into the Shipping Table
-            </span>
-          </div>
+        <Section
+          id="shippers"
+          title="Shippers"
+          hint="adding a shipper inserts a K-holder row into the Shipping Table"
+        >
           <ComponentTable tableKey="shipping" viewerName="shipping" addLabel="+ Add Shipper" />
-        </div>
+        </Section>
 
         {/* Locations — rows in public.location_purpose_code */}
-        <div className="cc-section">
-          <div className="wf-sources-head">
-            <strong>Locations</strong>
-            <span className="muted">
-              adding a location inserts a row into the Location Purpose Code Table
-            </span>
-          </div>
+        <Section
+          id="locations"
+          title="Locations"
+          hint="adding a location inserts a row into the Location Purpose Code Table"
+        >
           <ComponentTable
             tableKey="location-purpose-code"
             viewerName="location_purpose_code"
             addLabel="+ Add Location"
           />
-        </div>
+        </Section>
 
         {/* Rec-del pairings — rows ARE the Stage 4 pairing JSON */}
-        <div className="cc-section">
-          <div className="wf-sources-head">
-            <strong>Rec-Del Pairings</strong>
-            <span className="muted">
-              each row is one entry of the Stage 4 pairing JSON — Pipeline, DUNS, Order,
-              Pattern, Regex
-            </span>
-          </div>
+        <Section
+          id="rec-del"
+          title="Rec-Del Pairings"
+          hint="each row is one entry of the Stage 4 pairing JSON — Pipeline, DUNS, Order, Pattern, Regex"
+        >
           <p className="wf-note">
             The default patterns are seeded to match the pipeline&apos;s config file. Add a row
             to append an entry; use <strong>View JSON</strong> to see (and copy) the exact
@@ -361,7 +748,7 @@ export default function ComponentsConfig() {
             addLabel="+ Add Pairing"
             jsonPreview
           />
-        </div>
+        </Section>
       </div>
     </>
   );

@@ -1,8 +1,11 @@
+// The route table. Every page except login/register sits behind <Protected>,
+// which bounces signed-out visitors to /login.
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './auth-context';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import ReferenceData from './pages/ReferenceData';
 import TableViewer from './pages/TableViewer';
 import TableView from './pages/TableView';
 import Reports from './pages/Reports';
@@ -25,6 +28,14 @@ export default function App() {
         element={
           <Protected>
             <Dashboard />
+          </Protected>
+        }
+      />
+      <Route
+        path="/reference"
+        element={
+          <Protected>
+            <ReferenceData />
           </Protected>
         }
       />

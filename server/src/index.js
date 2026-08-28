@@ -1,3 +1,9 @@
+// The entire backend API — every route the app calls lives in this one file,
+// grouped under section banners:
+//   Auth · Tables · Configure Components · Configure Source · Scenarios ·
+//   Pipeline filter options · Power BI · Pipeline · Workflows
+// Locally it listens on :4000; on Vercel the very same app is exported and
+// served by api/index.js as a single serverless function.
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -497,6 +503,349 @@ app.delete('/api/components/:key', requireAuth, wrap(async (req, res) => {
   const ctid = String(req.body?.ctid || '');
   if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
   await sql.query(`DELETE FROM ${spec.backing} WHERE ctid = $1::tid`, [ctid]);
+  res.json({ ok: true });
+}));
+
+// ---------- Configure Source ----------
+// Which upstream API the workflow's source JSONs come from. A single-row
+// setting (public.source_config) picked in Configure Components, plus one
+// credentials row per source (public.source_credentials) so someone can enter
+// their NatGasHub / Cortex access from the app and have it verified. For now
+// this is configuration only — retrieval still runs against the mock NGH API
+// until the other sources are wired to read this setting.
+const SOURCE_OPTIONS = [
+  {
+    key: 'mockup-natgashub',
+    label: 'Mock-Up NatGasHub',
+    description: 'The mock NatGasHub API — same feed shapes, generated JSON',
+    needsCredentials: false,
+  },
+  {
+    key: 'natgashub',
+    label: 'NatGasHub',
+    description: 'Live NatGasHub API — the real gTran, gExchange and Index of Customers feeds',
+    needsCredentials: true,
+    healthPath: '/api/firms', // same shape as the mock — a cheap authenticated GET
+  },
+  {
+    key: 'cortex',
+    label: 'Cortex',
+    description: 'Cortex API — source the feed JSONs from Cortex',
+    needsCredentials: true,
+    healthPath: '',
+  },
+];
+const SOURCE_KEYS = new Set(SOURCE_OPTIONS.map((o) => o.key));
+const DEFAULT_SOURCE = 'mockup-natgashub';
+const sourceOption = (key) => {
+  const opt = SOURCE_OPTIONS.find((o) => o.key === key);
+  if (!opt) throw new Error('Unknown source.');
+  return opt;
+};
+
+let sourceConfigEnsured = false;
+async function ensureSourceConfig() {
+  if (sourceConfigEnsured) return true;
+  try {
+    await sql.query(
+      `CREATE TABLE IF NOT EXISTS public.source_config (
+        id integer PRIMARY KEY CHECK (id = 1),
+        source text NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`
+    );
+    await sql.query(
+      `INSERT INTO public.source_config (id, source) VALUES (1, $1)
+       ON CONFLICT (id) DO NOTHING`,
+      [DEFAULT_SOURCE]
+    );
+    await sql.query(
+      `CREATE TABLE IF NOT EXISTS public.source_credentials (
+        source        text PRIMARY KEY,
+        base_url      text NOT NULL,
+        username      text,
+        api_key       text,
+        status        text,
+        status_detail text,
+        verified_at   timestamptz,
+        updated_at    timestamptz NOT NULL DEFAULT now()
+      )`
+    );
+    sourceConfigEnsured = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// What the client may see about a source's stored credentials — never the key.
+const connectionSummary = (row) => ({
+  configured: Boolean(row),
+  status: row?.status || null,
+  detail: row?.status_detail || null,
+  verifiedAt: row?.verified_at || null,
+  baseUrl: row?.base_url || '',
+  username: row?.username || '',
+  hasKey: Boolean(row?.api_key),
+});
+
+// Ping the source API with the stored credentials. Basic auth when a username
+// is given, otherwise the key rides as both Bearer and x-api-key — covering
+// the common schemes without knowing each API's exact one up front.
+async function verifySourceApi(opt, { base_url, username, api_key }) {
+  const headers = { Accept: 'application/json' };
+  if (username) {
+    headers.Authorization = `Basic ${Buffer.from(`${username}:${api_key || ''}`).toString('base64')}`;
+  } else if (api_key) {
+    headers.Authorization = `Bearer ${api_key}`;
+    headers['x-api-key'] = api_key;
+  }
+  const url = base_url.replace(/\/+$/, '') + (opt.healthPath || '');
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 6000);
+  try {
+    const resp = await fetch(url, { headers, signal: ctl.signal });
+    if (resp.ok) return { ok: true, detail: `API responded (HTTP ${resp.status})` };
+    if (resp.status === 401 || resp.status === 403) {
+      return { ok: false, detail: `credentials rejected (HTTP ${resp.status})` };
+    }
+    return { ok: false, detail: `reachable but returned HTTP ${resp.status} — check the base URL` };
+  } catch {
+    return { ok: false, detail: 'API unreachable — check the base URL' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Run a verification for one source's stored row and persist the outcome.
+async function verifyAndStore(opt, row) {
+  const result = await verifySourceApi(opt, row);
+  const [updated] = await sql`
+    UPDATE source_credentials
+    SET status = ${result.ok ? 'connected' : 'failed'},
+        status_detail = ${result.detail},
+        verified_at = now()
+    WHERE source = ${opt.key}
+    RETURNING *`;
+  return updated;
+}
+
+app.get('/api/source-config', requireAuth, wrap(async (req, res) => {
+  let source = DEFAULT_SOURCE;
+  let credRows = [];
+  if (await ensureSourceConfig()) {
+    const [row] = await sql`SELECT source FROM source_config WHERE id = 1`;
+    if (row && SOURCE_KEYS.has(row.source)) source = row.source;
+    credRows = await sql`SELECT * FROM source_credentials`;
+  }
+  const byKey = Object.fromEntries(credRows.map((r) => [r.source, r]));
+  const options = SOURCE_OPTIONS.map(({ healthPath, ...opt }) => ({
+    ...opt,
+    connection: opt.needsCredentials ? connectionSummary(byKey[opt.key]) : null,
+  }));
+  res.json({ source, options });
+}));
+
+app.put('/api/source-config', requireAuth, wrap(async (req, res) => {
+  const source = String(req.body?.source || '');
+  if (!SOURCE_KEYS.has(source)) throw new Error('Unknown source.');
+  if (!(await ensureSourceConfig())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  await sql`
+    INSERT INTO source_config (id, source) VALUES (1, ${source})
+    ON CONFLICT (id) DO UPDATE SET source = EXCLUDED.source, updated_at = now()`;
+  res.json({ ok: true, source });
+}));
+
+// Save (or update) one source's credentials, then verify them immediately.
+// A blank api key on update keeps the stored one, so editing the base URL
+// doesn't force re-entering the secret.
+app.put('/api/source-config/:key/credentials', requireAuth, wrap(async (req, res) => {
+  const opt = sourceOption(req.params.key);
+  if (!opt.needsCredentials) throw new Error(`${opt.label} does not take credentials.`);
+  if (!(await ensureSourceConfig())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const baseUrl = String(req.body?.baseUrl || '').trim();
+  const username = String(req.body?.username || '').trim();
+  const apiKey = String(req.body?.apiKey || '').trim();
+  if (!/^https?:\/\/.+/.test(baseUrl)) {
+    throw new Error('Enter the API base URL, starting with http:// or https://.');
+  }
+  const [existing] = await sql`SELECT * FROM source_credentials WHERE source = ${opt.key}`;
+  if (!apiKey && !existing?.api_key && !username) {
+    throw new Error('Enter an API key (or a username and password).');
+  }
+  const [row] = await sql`
+    INSERT INTO source_credentials (source, base_url, username, api_key)
+    VALUES (${opt.key}, ${baseUrl}, ${username || null}, ${apiKey || existing?.api_key || null})
+    ON CONFLICT (source) DO UPDATE
+    SET base_url = EXCLUDED.base_url,
+        username = EXCLUDED.username,
+        api_key = EXCLUDED.api_key,
+        updated_at = now()
+    RETURNING *`;
+  const verified = await verifyAndStore(opt, row);
+  res.json({ connection: connectionSummary(verified) });
+}));
+
+// Re-run the connection check — stored credentials for the real sources; the
+// mock is pinged directly at SOURCE_API_BASE (nothing stored or needed).
+app.post('/api/source-config/:key/verify', requireAuth, wrap(async (req, res) => {
+  const opt = sourceOption(req.params.key);
+  if (!opt.needsCredentials) {
+    const result = await verifySourceApi({ healthPath: '/api/firms' }, { base_url: SOURCE_API_BASE });
+    const detail = !result.ok && result.detail.includes('unreachable')
+      ? `mock API unreachable at ${SOURCE_API_BASE} — is it running?`
+      : result.detail;
+    return res.json({
+      connection: {
+        configured: false,
+        status: result.ok ? 'connected' : 'failed',
+        detail,
+        verifiedAt: new Date().toISOString(),
+        baseUrl: SOURCE_API_BASE,
+        username: '',
+        hasKey: false,
+      },
+    });
+  }
+  if (!(await ensureSourceConfig())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const [row] = await sql`SELECT * FROM source_credentials WHERE source = ${opt.key}`;
+  if (!row) throw new Error(`No credentials saved for ${opt.label} yet.`);
+  const verified = await verifyAndStore(opt, row);
+  res.json({ connection: connectionSummary(verified) });
+}));
+
+// Forget a source's credentials entirely.
+app.delete('/api/source-config/:key/credentials', requireAuth, wrap(async (req, res) => {
+  const opt = sourceOption(req.params.key);
+  if (await ensureSourceConfig()) {
+    await sql`DELETE FROM source_credentials WHERE source = ${opt.key}`;
+  }
+  res.json({ ok: true });
+}));
+
+// ---------- Scenarios ----------
+// Named run configurations created on the dashboard and attached to
+// workflows there. A scenario pins one choice per reference data point
+// (source, pipeline, shipper, location, rec-del pairing) in its jsonb
+// config, picked from dropdowns fed by the live reference tables.
+const SCENARIO_FIELDS = ['source', 'pipeline', 'shipper', 'location', 'pairing'];
+
+let scenariosEnsured = false;
+async function ensureScenarios() {
+  if (scenariosEnsured) return true;
+  try {
+    await sql.query(
+      `CREATE TABLE IF NOT EXISTS public.scenarios (
+        id serial PRIMARY KEY,
+        name text NOT NULL,
+        description text,
+        config jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`
+    );
+    await sql.query(`ALTER TABLE public.scenarios ADD COLUMN IF NOT EXISTS config jsonb`);
+    scenariosEnsured = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+app.get('/api/scenarios', requireAuth, wrap(async (req, res) => {
+  let scenarios = [];
+  if (await ensureScenarios()) {
+    scenarios = await sql`SELECT * FROM scenarios ORDER BY id`;
+  }
+  res.json({ scenarios });
+}));
+
+// Dropdown choices for a scenario, one list per reference data point,
+// compiled from the live reference tables (and the source option list).
+app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
+  const grab = async (key, query, toLabel) => {
+    try {
+      if (!(await ensureComponentTable(COMPONENT_TABLES[key]))) return [];
+      return [...new Set((await sql.query(query)).map(toLabel).filter(Boolean))];
+    } catch {
+      return [];
+    }
+  };
+  res.json({
+    options: {
+      source: SOURCE_OPTIONS.map((o) => o.label),
+      pipeline: await grab(
+        'pipeline-attributes',
+        `SELECT DISTINCT "Pipeline" AS name, "DUNS" AS duns FROM public.pipeline_attributes
+         WHERE "Pipeline" IS NOT NULL ORDER BY 1`,
+        (r) => (r.duns ? `${r.name} (${r.duns})` : r.name)
+      ),
+      shipper: await grab(
+        'shipping',
+        `SELECT "KHolderName" AS name, "KHolderNo" AS no FROM public.shipping
+         WHERE "KHolderName" IS NOT NULL ORDER BY 1`,
+        (r) => (r.no ? `${r.name} (${r.no})` : r.name)
+      ),
+      location: await grab(
+        'location-purpose-code',
+        `SELECT "Pipeline" AS p, "Loc_QTI" AS q, "StandardizedLocPurp" AS s
+         FROM public.location_purpose_code ORDER BY id`,
+        (r) => [r.p, r.q, r.s].filter(Boolean).join(' — ')
+      ),
+      pairing: await grab(
+        'rec-del-pairings',
+        `SELECT "Order" AS ord, "Pattern" AS pat, "Pipeline" AS p
+         FROM public.rec_del_pairings ORDER BY "Order", id`,
+        (r) => `${r.ord != null ? `${r.ord}. ` : ''}${r.pat || ''}${r.p ? ` (${r.p})` : ''}`.trim()
+      ),
+    },
+  });
+}));
+
+app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
+  const name = String(req.body?.name || '').trim();
+  const description = String(req.body?.description || '').trim();
+  if (!name) throw new Error('Scenario name is required.');
+  // Keep only the known reference points; each holds one or more values
+  // (a lone string is accepted and folded into a one-element array)
+  const raw = req.body?.config;
+  let config = null;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    config = {};
+    for (const f of SCENARIO_FIELDS) {
+      const arr = Array.isArray(raw[f]) ? raw[f] : typeof raw[f] === 'string' ? [raw[f]] : [];
+      const vals = [
+        ...new Set(
+          arr
+            .filter((v) => typeof v === 'string' && v.trim())
+            .map((v) => v.trim().slice(0, 300))
+        ),
+      ].slice(0, 50);
+      if (vals.length) config[f] = vals;
+    }
+    if (!Object.keys(config).length) config = null;
+  }
+  if (!(await ensureScenarios())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const [scenario] = await sql`
+    INSERT INTO scenarios (name, description, config)
+    VALUES (${name}, ${description || null}, ${config ? JSON.stringify(config) : null}::jsonb)
+    RETURNING *`;
+  res.json({ scenario });
+}));
+
+app.delete('/api/scenarios/:id', requireAuth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new Error('Bad scenario id.');
+  if (await ensureScenarios()) {
+    await sql`DELETE FROM scenarios WHERE id = ${id}`;
+  }
   res.json({ ok: true });
 }));
 

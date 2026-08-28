@@ -1,3 +1,5 @@
+// Login tokens: sign a JWT for a user, and check it on the way in.
+// `requireAuth` is the Express middleware every /api route runs behind.
 import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-secret';

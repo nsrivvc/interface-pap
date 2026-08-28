@@ -1,3 +1,5 @@
+// Table Viewer page: every warehouse table grouped stage by stage (per saved
+// workflow), with live row counts and links into each table's TableView.
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';

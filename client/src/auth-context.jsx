@@ -1,3 +1,5 @@
+// Who is signed in, app-wide. Restores the session from the stored token on
+// page load and exposes login / register / logout to the components.
 import { createContext, useContext, useEffect, useState } from 'react';
 import { api, getToken, setToken, clearToken } from './api';
 

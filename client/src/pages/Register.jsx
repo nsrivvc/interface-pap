@@ -1,3 +1,4 @@
+// Account creation form — name, email, password (stored hashed in Neon).
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth-context';

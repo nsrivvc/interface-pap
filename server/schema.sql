@@ -175,6 +175,43 @@ SELECT * FROM (VALUES
 ) v("Pipeline", "DUNS", "Order", "Pattern", "Regex")
 WHERE NOT EXISTS (SELECT 1 FROM public.rec_del_pairings);
 
+-- Which upstream API the workflow retrieves its source JSONs from
+-- (natgashub | mockup-natgashub | cortex) — a single-row setting managed
+-- from Configure Components.
+CREATE TABLE IF NOT EXISTS public.source_config (
+  id         integer PRIMARY KEY CHECK (id = 1),
+  source     text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO public.source_config (id, source)
+VALUES (1, 'mockup-natgashub')
+ON CONFLICT (id) DO NOTHING;
+
+-- Scenarios created on the Contract Workflow Dashboard and attached to
+-- workflows there. `config` pins one choice per reference data point
+-- ({ source, pipeline, shipper, location, pairing }).
+CREATE TABLE IF NOT EXISTS public.scenarios (
+  id          serial PRIMARY KEY,
+  name        text NOT NULL,
+  description text,
+  config      jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE public.scenarios ADD COLUMN IF NOT EXISTS config jsonb;
+
+-- Per-source API credentials entered from Configure Components, with the
+-- outcome of the last connection check (status: connected | failed).
+CREATE TABLE IF NOT EXISTS public.source_credentials (
+  source        text PRIMARY KEY,
+  base_url      text NOT NULL,
+  username      text,
+  api_key       text,
+  status        text,
+  status_detail text,
+  verified_at   timestamptz,
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+
 -- Location purpose codes per pipeline, managed from Configure Components.
 -- DUNS stays text because it carries leading zeros ("054748041").
 CREATE TABLE IF NOT EXISTS public.location_purpose_code (

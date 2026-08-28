@@ -1,3 +1,8 @@
+// The in-app simulated pipeline (NOT the real one): dummy source retrieval
+// plus Stages 1-5 (validate, normalize, enrich, aggregate, publish), used by
+// the dashboard's "Full Pipeline" workflow and by local mode. The real
+// transformations run as GitHub Actions in the pipeline repo — see github.js
+// for how those get dispatched.
 import { randomUUID } from 'node:crypto';
 import { sql, hasDb } from './db.js';
 import { provider, FEED_KEYS } from './providers/index.js';

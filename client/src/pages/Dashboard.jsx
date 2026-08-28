@@ -1,3 +1,5 @@
+// Contract Workflow Dashboard page shell: hero banner + the WorkflowPanel,
+// which holds the scenarios and workflows UI.
 import Header from '../components/Header';
 import WorkflowPanel from '../components/WorkflowPanel';
 
@@ -10,7 +12,7 @@ export default function Dashboard() {
           <div className="eyebrow">Data Pipeline Interface</div>
           <h1>Contract Workflow Dashboard</h1>
           <p>
-            Configure workflows from the pipeline stages, trigger individual pipelines
+            Create scenarios, attach them to workflows, trigger individual pipelines
             manually, and schedule automatic daily runs.
           </p>
         </div>

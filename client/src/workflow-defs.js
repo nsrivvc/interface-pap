@@ -42,6 +42,9 @@ export function loadWorkflows() {
         ...w,
         stageCount: Math.min(w.stageCount, STAGE_DEFS.length),
         sources: sources.length ? sources : ALL_SOURCE_KEYS,
+        // Ids of the scenarios attached to this workflow (created on the
+        // dashboard, stored in Neon) — stale ids are ignored at render time
+        scenarios: Array.isArray(w.scenarios) ? w.scenarios : [],
         // Shippers used to carry name/duns/contract/notes; they're just the
         // K-holder pair now, so older saves are folded onto the new shape.
         shippers: (w.shippers || []).map((sh) => ({

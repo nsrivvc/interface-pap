@@ -1,3 +1,4 @@
+// App entry point: mounts React with the router and the auth provider.
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';

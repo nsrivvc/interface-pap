@@ -1,3 +1,7 @@
+// One-shot database setup (npm run db:init): applies schema.sql to Neon
+// statement by statement and seeds the default admin account (admin/12345).
+// Everything in the schema is IF NOT EXISTS / seed-when-empty, so re-running
+// is always safe.
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
