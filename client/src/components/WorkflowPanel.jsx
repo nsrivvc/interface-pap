@@ -141,6 +141,23 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [scenarioOptions, setScenarioOptions] = useState(null); // dropdown choices
   const [scenarioBusy, setScenarioBusy] = useState(false);
   const [scenarioError, setScenarioError] = useState('');
+  // The whole panel tucks away behind its header; the choice sticks per browser
+  const [scenariosOpen, setScenariosOpen] = useState(() => {
+    try {
+      return localStorage.getItem('scenarios-open') !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const toggleScenarios = () =>
+    setScenariosOpen((o) => {
+      try {
+        localStorage.setItem('scenarios-open', o ? '0' : '1');
+      } catch {
+        // storage unavailable — the panel still toggles, just isn't remembered
+      }
+      return !o;
+    });
 
   const setPick = (key, i, value) =>
     setScenarioPicks((p) => ({
@@ -610,12 +627,23 @@ export default function WorkflowPanel({ onPipelineRan }) {
     <>
     {/* ---- Scenarios — created here, attached to workflows below ---- */}
     <div className="panel" style={{ marginBottom: 18 }}>
-      <div className="workflow-row" style={{ marginBottom: 6 }}>
+      <div
+        className="workflow-row cc-collapsible-head"
+        style={{ marginBottom: scenariosOpen ? 6 : 0 }}
+        onClick={toggleScenarios}
+        role="button"
+        aria-expanded={scenariosOpen}
+      >
         <div>
           <span className="eyebrow">Planning</span>
           <h2 style={{ marginBottom: 0 }}>Scenarios</h2>
         </div>
+        <span className="cc-collapse-btn" title={scenariosOpen ? 'Collapse' : 'Expand'}>
+          {scenariosOpen ? '▾' : '▸'}
+        </span>
       </div>
+      {scenariosOpen && (
+      <>
       <p className="muted" style={{ margin: '4px 0 14px', color: 'var(--slate)' }}>
         A scenario pins one choice per reference data point. Pick from the dropdowns —
         fed by the tables on the <Link to="/reference">Reference Data</Link> tab — save
@@ -735,6 +763,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
         <p className="muted" style={{ color: 'var(--slate)', fontSize: '0.8rem', margin: 0 }}>
           No scenarios yet — name one above to create it.
         </p>
+      )}
+      </>
       )}
     </div>
 
