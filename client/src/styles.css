@@ -883,6 +883,8 @@ button {
 }
 
 /* ---- Live GitHub Actions run status on a workflow card ---- */
+/* Kept for any standalone use; inside .run-detail the section supplies the
+   frame, so these carry no border or background of their own. */
 .gh-runs {
   margin-top: 14px;
   border: 1px solid var(--border);
@@ -895,6 +897,19 @@ button {
   font-weight: 700;
   color: var(--navy);
   margin-bottom: 6px;
+}
+/* What shipper scope the run was dispatched with (from its scenario). */
+.gh-scope-line {
+  font-size: 0.78rem;
+  color: var(--slate);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: rgba(31, 42, 68, 0.04);
+}
+.gh-scope-line.scoped {
+  color: var(--navy);
+  background: #fdf0e5;
 }
 .gh-run-line {
   display: flex;
@@ -927,31 +942,6 @@ button {
   text-decoration: underline;
 }
 
-.wf-complete {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: #e2f3ea;
-  color: var(--success);
-  font-size: 0.85rem;
-  font-weight: 600;
-  animation: complete-in 0.45s ease;
-}
-.wf-complete-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--success);
-  color: #fff;
-  font-size: 0.8rem;
-  animation: tick-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
 @keyframes complete-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1963,4 +1953,203 @@ td.json-cell {
 .cc-add-inline:hover {
   background: var(--orange);
   color: #fff;
+}
+
+/* ---- Write semantics on a workflow card ----
+   What a run DID to each table, not just that it finished. The colours carry
+   the meaning, so they are deliberate: PRESERVED is green because the table
+   was left intact, REBUILT is amber because the rows were replaced — amber and
+   not red, since a rebuild is the designed behaviour of every Silver table and
+   must not read as a failure. Red stays reserved for jobs that actually broke. */
+/* ONE panel for the run: where it ran, then what it wrote. The two used to be
+   separate bordered boxes, which read as unrelated reports — the write
+   semantics are detail ON those runs, so they share a container and are
+   separated by a rule rather than a gap. */
+.run-detail {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+.run-detail-sec {
+  padding: 12px 14px;
+}
+.run-detail-sec + .run-detail-sec {
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+.run-detail-head {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 8px;
+}
+.write-row {
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+.write-row:first-of-type {
+  border-top: none;
+}
+.write-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.write-step-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+.write-rows {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--slate);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.write-note {
+  font-size: 0.72rem;
+  color: var(--slate);
+  font-style: italic;
+}
+/* "· 3 tables" beside a step that wrote more than one table */
+.write-rows-sub {
+  font-weight: 500;
+  opacity: 0.75;
+}
+.write-copy {
+  font-size: 0.78rem;
+  color: var(--slate);
+  margin-top: 3px;
+  /* Clears the badge so the sentence lines up under the step label */
+  padding-left: 96px;
+}
+.write-error {
+  color: var(--danger);
+}
+.write-row.failed .write-step-label {
+  color: var(--danger);
+}
+.write-row.running .write-step-label {
+  color: var(--orange);
+}
+
+/* The four write-mode badges */
+.write-badge {
+  display: inline-block;
+  flex: none;
+  width: 86px;
+  text-align: center;
+  padding: 3px 0;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: help;
+}
+/* Rows added to a raw archive — informational blue, nothing is at risk */
+.write-badge.appended {
+  background: #e7ecf6;
+  color: var(--navy);
+}
+/* Untouched and safe — the only table that survives a run */
+.write-badge.preserved {
+  background: #e2f3ea;
+  color: var(--success);
+  box-shadow: inset 0 0 0 1px rgba(29, 122, 76, 0.25);
+}
+/* Replaced, not broken */
+.write-badge.rebuilt {
+  background: #fdf0e5;
+  color: var(--orange);
+}
+/* A deliberate no-op */
+.write-badge.skipped {
+  background: #eef1f6;
+  color: var(--slate);
+}
+
+/* The standing caveat: ids on rebuilt tables are not stable across runs. */
+.write-caveat {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(31, 42, 68, 0.04);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--slate);
+}
+.write-caveat-icon {
+  flex: none;
+  font-size: 0.85rem;
+  color: var(--navy);
+}
+
+/* Run outcome: that every stage finished AND whether anything changed, as one
+   block. A no-op run is neither a failure nor a success worth celebrating, so
+   the verdict half stays neutral slate on an otherwise green banner. */
+.wf-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #e2f3ea;
+  color: var(--success);
+  font-size: 0.85rem;
+  animation: complete-in 0.45s ease;
+}
+.wf-outcome-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.wf-outcome-head {
+  font-weight: 600;
+}
+.wf-outcome-verdict {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--navy);
+  padding-top: 5px;
+  border-top: 1px solid rgba(31, 42, 68, 0.12);
+}
+.wf-outcome.noop {
+  background: #eef1f6;
+  color: var(--navy);
+}
+.wf-outcome-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+  font-size: 0.8rem;
+  animation: tick-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.badge.write-verdict-badge {
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+}
+.badge.write-verdict-badge.noop {
+  background: #eef1f6;
+  color: var(--slate);
+}
+.badge.write-verdict-badge.changed {
+  background: #e2f3ea;
+  color: var(--success);
 }

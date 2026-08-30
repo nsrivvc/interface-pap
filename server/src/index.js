@@ -14,6 +14,7 @@ import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
 import { triggerPipeline, triggerIngest, pipelineRunStatus, cancelPipelineRuns } from './github.js';
+import { applyScenarioScope } from './scope.js';
 import { powerbiAadToken, powerbiConfigured, goldReportEmbed } from './powerbi.js';
 import { provider, FEED_KEYS, feedSummaries } from './providers/index.js';
 
@@ -970,8 +971,13 @@ app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
 
 // Dispatch each selected source's end-to-end pipeline workflow (stages 1-5
 // in one run per feed) on the STAGE_3_4_5 repo. Route path kept for the client.
+// The workflow's attached scenario is applied FIRST, as the pipeline's shipper
+// scope (bronze.shipper_mapping), so the dispatched stage-3 runs read it —
+// no scenario clears the scope, keeping every run reproducible from its
+// scenario alone.
 app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => {
-  res.json(await triggerPipeline(req.body?.sources));
+  const scope = await applyScenarioScope(req.body?.scenarioId);
+  res.json({ ...(await triggerPipeline(req.body?.sources)), scope });
 }));
 
 // Dispatch one source's ingest-only (stage 1-2) workflow — Manual Workflow panel
@@ -981,9 +987,16 @@ app.post('/api/pipeline/trigger-ingest', requireAuth, wrap(async (req, res) => {
 
 // Live status of a dispatch (?files=a.yml,b.yml&since=ISO): one run per file,
 // with its jobs — stages 3-5 are jobs inside each feed's run now.
+//
+// Add &writes=1 to also read each job's log for the run's WRITE SEMANTICS —
+// which tables were appended to, preserved, rebuilt or skipped, and how many
+// rows each moved. That is the part a bare "completed" hides: rerunning a
+// workflow rebuilds every downstream table whether or not anything new came
+// in, and only the amendments ledger carries state between runs.
 app.get('/api/pipeline/run-status', requireAuth, wrap(async (req, res) => {
   const files = String(req.query.files || '').split(',').filter(Boolean);
-  res.json(await pipelineRunStatus(files, req.query.since));
+  const withWrites = req.query.writes === '1';
+  res.json(await pipelineRunStatus(files, req.query.since, { withWrites }));
 }));
 
 // Cancel the in-flight GitHub Actions runs of a dispatch ({ files, since })

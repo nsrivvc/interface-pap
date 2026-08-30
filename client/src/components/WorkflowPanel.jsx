@@ -18,6 +18,14 @@ import {
   saveWorkflows,
 } from '../workflow-defs';
 import { FEED_WORKFLOW_FILES } from '../providers/index.js';
+import {
+  WRITE_MODE_INFO,
+  WRITE_STEPS,
+  writeStepCopy,
+  partialSkipNote,
+  runWriteVerdict,
+  REBUILD_ID_WARNING,
+} from '../write-modes.js';
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -121,6 +129,100 @@ function ScenarioSummary({ scenario }) {
             : scenario.config[f.key]}
         </span>
       ))}
+    </div>
+  );
+}
+
+/**
+ * WRITE SEMANTICS for a run — the part "completed" hides.
+ *
+ * One row per pipeline step, live as it executes: a badge for how the step
+ * touched its table, the rows it moved, and one line of plain English saying
+ * what that mode means for that table. The distinction being drawn is that
+ * only the amendments ledger (PRESERVED) carries state across runs; every
+ * other Silver table is REBUILT from scratch every single run, whether or not
+ * anything new arrived.
+ */
+function WriteSemantics({ writes }) {
+  const steps = writes?.steps || [];
+  if (!steps.length) return null;
+
+  return (
+    <div className="run-detail-sec">
+      <div className="run-detail-head">✎ Write semantics — what this run did to each table</div>
+      {steps.map((step) => {
+        const info = WRITE_MODE_INFO[step.mode] || WRITE_MODE_INFO.skipped;
+        const note = partialSkipNote(step);
+        const tables = step.tables.join(', ');
+        return (
+          <div key={step.key} className={`write-row ${step.status}`}>
+            <div className="write-row-top">
+              <span
+                className={`write-badge ${info.tone}`}
+                title={
+                  info.title +
+                  (step.certain
+                    ? ''
+                    : '\n\n(Inferred from the transformation name — this run\'s log ' +
+                      'did not state the write mode outright.)')
+                }
+              >
+                {info.label}
+              </span>
+              <span className="write-step-label" title={tables || undefined}>
+                {WRITE_STEPS[step.key]?.label || step.key}
+              </span>
+              {step.status === 'running' && <span className="spin">⟳</span>}
+              {note && <span className="write-note">{note}</span>}
+              <span className="write-rows">
+                {typeof step.rows === 'number'
+                  ? `${step.rows.toLocaleString()} row${step.rows === 1 ? '' : 's'}`
+                  : '…'}
+                {/* A step spanning several tables (stage 5 core/locations/rates)
+                    sums rows of the SAME grain, but say how many tables that is
+                    so the number is never mistaken for one table's size. */}
+                {step.count > 1 && (
+                  <span className="write-rows-sub"> · {step.count} tables</span>
+                )}
+              </span>
+            </div>
+            <div className="write-copy">{writeStepCopy(step, writes)}</div>
+            {step.errors.length > 0 && (
+              <div className="write-copy write-error">{step.errors.join(' · ')}</div>
+            )}
+          </div>
+        );
+      })}
+      {writes.anyRebuilt && (
+        <div className="write-caveat">
+          <span className="write-caveat-icon">ⓘ</span>
+          {REBUILD_ID_WARNING}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * How the run ended, as ONE statement: that every stage finished, and whether
+ * anything actually changed. These were two stacked banners before, which read
+ * as two unrelated verdicts — "complete" is only the first half of the answer,
+ * so the outcome and the verdict belong in the same block.
+ */
+function RunOutcome({ verdict }) {
+  return (
+    <div className={`wf-outcome ${verdict?.kind || 'plain'}`}>
+      <span className="wf-outcome-icon">✓</span>
+      <div className="wf-outcome-body">
+        <div className="wf-outcome-head">
+          Workflow complete — every pipeline stage finished successfully.
+        </div>
+        {verdict && (
+          <div className="wf-outcome-verdict">
+            <strong>{verdict.headline}</strong> {verdict.detail}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -407,6 +509,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
       stageStates: Array(wf.stageCount).fill('pending'),
       github: null,
       githubRuns: null,
+      writes: null, // write semantics per step, filled in by the polling effect
       githubDone: false,
       ok: null,
       error: null,
@@ -420,8 +523,13 @@ export default function WorkflowPanel({ onPipelineRan }) {
     //
     // A bare 5xx/network failure usually means the dev API was mid-restart
     // (node --watch), so retry once before treating it as a real failure.
+    // The attached scenario rides along: the server pins the pipeline's
+    // shipper scope to its picks before dispatching (none attached = unscoped).
     const trigger12 = () =>
-      api('/api/pipeline/trigger-stage12', { method: 'POST', body: { sources: wf.sources } });
+      api('/api/pipeline/trigger-stage12', {
+        method: 'POST',
+        body: { sources: wf.sources, scenarioId: wf.scenarios?.[0] ?? null },
+      });
     try {
       let github;
       try {
@@ -468,6 +576,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
         stageStates: Array(saved.stageCount).fill('pending'),
         github: saved.github,
         githubRuns: null,
+        writes: null,
         githubDone: false,
         ok: null,
         error: null,
@@ -523,8 +632,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
         if (!cur) return;
         // 60s of clock-skew slack; runs older than this are a previous dispatch
         const since = new Date(cur.startedAt - 60000).toISOString();
+        // writes=1 also reads the jobs' logs for what each transformation did
+        // to its table (appended / preserved / rebuilt / skipped) — the part a
+        // bare "completed" hides. Best effort on the server, so a run with no
+        // readable logs still tracks normally.
         const res = await api(
-          `/api/pipeline/run-status?files=${files.join(',')}&since=${encodeURIComponent(since)}`
+          `/api/pipeline/run-status?files=${files.join(',')}&since=${encodeURIComponent(since)}&writes=1`
         );
         if (cancelled) return;
         // One run per dispatched feed; stages 3-5 are jobs INSIDE that run.
@@ -581,11 +694,18 @@ export default function WorkflowPanel({ onPipelineRan }) {
         const done = allDone;
         const ok = done && started.every((x) => x.run.conclusion === 'success');
 
+        // Write semantics for this dispatch, rolled up across every job's log.
+        // Absent (older server, unreadable logs) simply means no write block.
+        const writes = res.writes || null;
+
         if (done && !cur.githubDone) {
           recordLastRun(cur.id, {
             at: Date.now(),
             status: ok ? 'success' : 'failed',
             trigger: cur.trigger,
+            // Keep the verdict with the run so the card can still say whether
+            // anything actually changed after a refresh, not just "completed".
+            verdict: runWriteVerdict(writes),
           });
           localStorage.removeItem(ACTIVE_RUN_KEY);
           onPipelineRan?.();
@@ -597,6 +717,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
                 sourceStates,
                 stageStates,
                 githubRuns,
+                writes: writes || r.writes,
                 githubDone: done,
                 finished: done ? true : r.finished,
                 ok: done ? ok : r.ok,
@@ -648,6 +769,9 @@ export default function WorkflowPanel({ onPipelineRan }) {
         A scenario pins one choice per reference data point. Pick from the dropdowns —
         fed by the tables on the <Link to="/reference">Reference Data</Link> tab — save
         the scenario, then attach it to a workflow below and set its automatic times.
+        When that workflow runs, the scenario's <strong>shippers</strong> become the
+        pipeline's scope: only their contracts pass Stage&nbsp;3. No scenario (or no
+        shippers picked) = every shipper passes.
       </p>
       {scenarioError && <div className="status-line err">{scenarioError}</div>}
       <div className="scenario-create">
@@ -1110,6 +1234,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
                         {wf.lastRun.trigger === 'auto' ? 'automatic run' : 'manual run'}
                       </span>
                     )}
+                    {/* "completed" alone can't tell two identical runs apart —
+                        carry the verdict so a no-op rerun still reads as one. */}
+                    {wf.lastRun.verdict && (
+                      <span
+                        className={`badge write-verdict-badge ${wf.lastRun.verdict.kind}`}
+                        title={wf.lastRun.verdict.detail}
+                      >
+                        {wf.lastRun.verdict.kind === 'noop' ? 'no new postings' : 'new postings applied'}
+                      </span>
+                    )}
                   </div>
                 ) : (
                   <div className="wf-lastrun none">
@@ -1196,9 +1330,32 @@ export default function WorkflowPanel({ onPipelineRan }) {
               </div>
             </div>
 
+            {/* One panel for the whole run: where it ran, then what it wrote.
+                These were separate boxes and read as unrelated reports — the
+                write semantics only make sense as detail ON these runs. */}
             {thisRun?.github && (
-              <div className="gh-runs">
-                <div className="gh-runs-head">⚙ GitHub Actions — live pipeline runs</div>
+              <div className="run-detail">
+                <div className="run-detail-sec">
+                <div className="run-detail-head">⚙ GitHub Actions — live pipeline runs</div>
+                {thisRun.github.scope && (
+                  <div className={`gh-scope-line ${thisRun.github.scope.scoped ? 'scoped' : ''}`}>
+                    {thisRun.github.scope.scoped ? (
+                      <>
+                        🎯 Scenario <strong>{thisRun.github.scope.scenarioName}</strong> applied —
+                        scoped to {thisRun.github.scope.shippers.length} shipper
+                        {thisRun.github.scope.shippers.length > 1 ? 's' : ''}:{' '}
+                        {thisRun.github.scope.shippers
+                          .map((s) => s.name || s.duns)
+                          .join(', ')}
+                      </>
+                    ) : (
+                      <>Unscoped run — every shipper passes.</>
+                    )}
+                    {thisRun.github.scope.unmatched?.length > 0 && (
+                      <> (no DUNS found in: {thisRun.github.scope.unmatched.join(', ')})</>
+                    )}
+                  </div>
+                )}
                 {(
                   thisRun.githubRuns ||
                   thisRun.github.dispatched.map((f) => ({ key: f, name: f, state: 'queued', url: null }))
@@ -1222,16 +1379,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
                     )}
                   </div>
                 ))}
+                </div>
+                {/* What the run did to each table — live, as the jobs execute */}
+                <WriteSemantics writes={thisRun.writes} />
               </div>
             )}
             {thisRun?.finished &&
               thisRun.githubDone &&
               !thisRun.error &&
               (thisRun.ok ? (
-                <div className="wf-complete">
-                  <span className="wf-complete-icon">✓</span>
-                  Workflow complete — every pipeline stage finished successfully.
-                </div>
+                <RunOutcome verdict={runWriteVerdict(thisRun.writes)} />
               ) : (
                 <div className="status-line err">
                   Pipeline run failed — open the runs above for logs. This workflow run was
