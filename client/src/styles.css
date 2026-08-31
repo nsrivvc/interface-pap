@@ -2153,3 +2153,52 @@ td.json-cell {
   background: #e2f3ea;
   color: var(--success);
 }
+
+/* ---- Pipeline onboarding gate: contracts held back on a run ----
+   Amber, not red: the run itself is fine and every registered pipeline
+   processed normally. What needs attention is one TSP that isn't onboarded,
+   which is a data-setup task, not a broken pipeline. */
+.gate-reject {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f0d9c2;
+  border-left: 4px solid var(--orange);
+  border-radius: 8px;
+  background: #fdf6ef;
+}
+.gate-reject-head {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--orange-dark);
+  margin-bottom: 7px;
+}
+.gate-reject-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 0.79rem;
+  color: var(--navy);
+}
+.gate-reject-name {
+  font-weight: 600;
+}
+.gate-reject-duns {
+  font-variant-numeric: tabular-nums;
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+.gate-reject-rows {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--orange-dark);
+  white-space: nowrap;
+}
+.gate-reject-fix {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid #f0d9c2;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--slate);
+}

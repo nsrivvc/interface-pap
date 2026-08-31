@@ -69,6 +69,14 @@ const RE = {
   // SUMMARY: succeeded=7, skipped=1 | total rows affected: 4210
   summary: /SUMMARY: (.+?) \| total rows affected: (-?\d+)/,
 
+  // The pipeline ONBOARDING GATE (core/pipeline_scope.py) emits one of these
+  // per TSP it held back, alongside its prose ERROR line. A contract whose
+  // (DUNS, name) is not in the pipeline_attributes register never reaches
+  // staging — the rest of the load processes normally, so this is per-TSP news
+  // the run card has to show rather than a run-wide failure.
+  //   pipeline_rejected duns=964493527 name=Stallion Gas Storage LLC rows=1 feed=firm
+  pipelineRejected: /pipeline_rejected duns=(\S*) name=(.*?) rows=(\d+) feed=(\S*)/,
+
   // Stage 2 is a standalone loader (json_to_raw.py), not a registered
   // transformation — it never goes through run_one, so it has no "[name]"
   // lines at all. It print()s these two instead:
@@ -141,6 +149,7 @@ const blank = (name) => ({
  */
 export function parseRunnerLog(text) {
   const found = new Map(); // name -> record, insertion-ordered = execution order
+  const rejected = new Map(); // "duns|name" -> { duns, name, rows, feed }
   let summary = null;
   let pendingBronze = null; // the "-> bronze.x" line waiting for its "Done." line
 
@@ -233,6 +242,11 @@ export function parseRunnerLog(text) {
       rec.error = m[3].trim();
       continue;
     }
+    if ((m = RE.pipelineRejected.exec(line))) {
+      const rec = { duns: m[1], name: m[2].trim(), rows: Number(m[3]), feed: m[4] };
+      rejected.set(`${rec.duns}|${rec.name}`, rec); // same TSP logged once per job
+      continue;
+    }
     if ((m = RE.summary.exec(line))) {
       const counts = {};
       for (const part of m[1].split(',')) {
@@ -248,7 +262,7 @@ export function parseRunnerLog(text) {
   for (const rec of found.values()) {
     if (!rec.writeMode) setMode(rec, modeFromName(rec.name), 'name');
   }
-  return { transformations: [...found.values()], summary };
+  return { transformations: [...found.values()], summary, rejected: [...rejected.values()] };
 }
 
 // The steps the dashboard shows, in pipeline order. `stage` ties each one back
@@ -312,8 +326,13 @@ function rollupMode(records) {
  * the per-step rows the dashboard renders, plus the run-level numbers it needs
  * to say whether the run actually changed anything.
  */
-export function summarizeWrites(transformations) {
+export function summarizeWrites(transformations, rejections = []) {
   const all = dedupeByName(transformations.filter(Boolean));
+  // One entry per TSP across every job — the same rejection is logged by each
+  // feed's dedup, so key it rather than counting it twice.
+  const rejected = [
+    ...new Map(rejections.filter(Boolean).map((r) => [`${r.duns}|${r.name}`, r])).values(),
+  ];
   const steps = [];
   for (const { key, stage } of STEP_ORDER) {
     const records = all.filter((r) => r.step === key);
@@ -361,6 +380,9 @@ export function summarizeWrites(transformations) {
     bronzeRows: step('bronze')?.rows ?? null,
     dedupRows: step('dedup')?.rows ?? null,
     anyRebuilt: steps.some((s) => s.mode === 'rebuilt'),
+    // Contracts held back by the pipeline onboarding gate, if any.
+    rejected,
+    rejectedRows: rejected.reduce((sum, r) => sum + (r.rows || 0), 0),
     transformations: all,
   };
 }

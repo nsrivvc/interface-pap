@@ -145,11 +145,40 @@ function ScenarioSummary({ scenario }) {
  */
 function WriteSemantics({ writes }) {
   const steps = writes?.steps || [];
-  if (!steps.length) return null;
+  const rejected = writes?.rejected || [];
+  if (!steps.length && !rejected.length) return null;
 
   return (
     <div className="run-detail-sec">
+      {/* Contracts the onboarding gate turned away. Shown ABOVE the write rows
+          because it explains a short load: those rows never reached staging,
+          so every count below is missing them on purpose. */}
+      {rejected.length > 0 && (
+        <div className="gate-reject">
+          <div className="gate-reject-head">
+            ⚠ {writes.rejectedRows} contract row
+            {writes.rejectedRows === 1 ? '' : 's'} rejected — pipeline not registered
+          </div>
+          {rejected.map((r) => (
+            <div key={`${r.duns}|${r.name}`} className="gate-reject-row">
+              <span className="gate-reject-name">{r.name || '(no name)'}</span>
+              <span className="gate-reject-duns">{r.duns || '(no duns)'}</span>
+              <span className="gate-reject-rows">
+                {r.rows} row{r.rows === 1 ? '' : 's'} held back
+              </span>
+            </div>
+          ))}
+          <div className="gate-reject-fix">
+            Their TSP name and DUNS have no matching row in the pipeline attributes
+            register, so their contracts were not loaded. Add the pipeline to the
+            reference table (and to the scenario, if it pins specific pipelines) —
+            everything else in this load processed normally.
+          </div>
+        </div>
+      )}
+      {steps.length > 0 && (
       <div className="run-detail-head">✎ Write semantics — what this run did to each table</div>
+      )}
       {steps.map((step) => {
         const info = WRITE_MODE_INFO[step.mode] || WRITE_MODE_INFO.skipped;
         const note = partialSkipNote(step);

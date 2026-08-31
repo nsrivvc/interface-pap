@@ -38,11 +38,42 @@ const ENSURE_STATEMENTS = [
       ON bronze.shipper_mapping (action, source, kholdernumber)`,
 ];
 
+// Mirrors pipeline_scope.ddl() / the amendments DDL in the pipeline repo. The
+// REGISTER of pipelines the warehouse is allowed to process: a contract whose
+// TSP is absent here is held back at deduplication(p1) and reported, while
+// registered TSPs in the same load carry on. Lives in the staging schema
+// because that is where the pipeline's phases read it.
+const PIPELINE_SCHEMA = process.env.DECOMP_SCHEMA || 'silver_staging';
+const ENSURE_PIPELINE_STATEMENTS = [
+  `CREATE SCHEMA IF NOT EXISTS ${PIPELINE_SCHEMA}`,
+  `CREATE TABLE IF NOT EXISTS ${PIPELINE_SCHEMA}.pipeline_attributes (
+      tspduns             TEXT PRIMARY KEY,
+      tspname             TEXT,
+      amendment_reporting TEXT NOT NULL,
+      noted_ts            TIMESTAMPTZ DEFAULT now()
+  )`,
+];
+
+// The pipeline's amendments phase REJECTS the whole run if the register holds a
+// mode its CLASSIFY join cannot read, so only these spellings may be written.
+// The dashboard's reference table also carries "NA" (for IOC-sourced rows),
+// which is not a usable amendment mode — those rows are skipped rather than
+// projected, or they would fail every subsequent run.
+const AMENDMENT_MODES = ['all data', 'alldata', 'all', 'changes only', 'changesonly', 'changes'];
+const usableMode = (mode) => AMENDMENT_MODES.includes(String(mode ?? '').trim().toLowerCase());
+
 let scopeEnsured = false;
 async function ensureScopeTable() {
   if (scopeEnsured) return;
   for (const stmt of ENSURE_STATEMENTS) await sql.query(stmt);
   scopeEnsured = true;
+}
+
+let pipelineEnsured = false;
+async function ensurePipelineTable() {
+  if (pipelineEnsured) return;
+  for (const stmt of ENSURE_PIPELINE_STATEMENTS) await sql.query(stmt);
+  pipelineEnsured = true;
 }
 
 // Scenario shipper picks are the display labels from /api/scenario-options:
@@ -133,5 +164,104 @@ export async function applyScenarioScope(scenarioId) {
     scenarioName: scenario.name,
     shippers,
     unmatched,
+  };
+}
+
+/**
+ * Pin the pipeline register to the scenario's Pipeline picks.
+ *
+ * `public.pipeline_attributes` is the dashboard's reference data ("Pipeline",
+ * "DUNS", "AmendmentReporting"); the pipeline reads a differently-shaped table
+ * in the staging schema (tspduns, tspname, amendment_reporting). This projects
+ * one onto the other so a scenario is genuinely the config piece: the
+ * pipelines it pins are the pipelines the run is allowed to process, and a
+ * contract from any other TSP is held back at deduplication(p1) and reported.
+ *
+ * No picks = mirror EVERY onboarded pipeline. Deliberately not "let everything
+ * through": the register's whole purpose is the onboarding gate, so an
+ * unspecific scenario should still reject a pipeline nobody has onboarded —
+ * it just should not narrow further than the reference data already does.
+ *
+ * Rows whose AmendmentReporting is not a mode the pipeline's CLASSIFY join can
+ * read (the reference table's "NA") are skipped and reported back as
+ * `unusable`, because writing one would fail every subsequent amendments run.
+ */
+export async function applyScenarioPipelines(scenarioId) {
+  if (!hasDb) return { applied: false, reason: 'no database connected — register untouched' };
+
+  await ensurePipelineTable();
+
+  // The reference table is optional — a deployment that has never created it
+  // simply has no register to project, and the gate stays open.
+  const [{ exists } = {}] = await sql`
+    SELECT to_regclass('public.pipeline_attributes') IS NOT NULL AS exists`;
+  if (!exists) {
+    return { applied: false, reason: 'no public.pipeline_attributes reference table' };
+  }
+
+  const reference = await sql`
+    SELECT "Pipeline" AS name, "DUNS" AS duns, "AmendmentReporting" AS mode
+    FROM public.pipeline_attributes
+    WHERE "DUNS" IS NOT NULL AND btrim("DUNS") <> ''`;
+
+  const id = Number(scenarioId);
+  let picked = null; // null = no scenario/no picks = every onboarded pipeline
+  if (Number.isInteger(id) && id > 0) {
+    const [scenario] = await sql`SELECT config FROM scenarios WHERE id = ${id}`;
+    const picks = Array.isArray(scenario?.config?.pipeline) ? scenario.config.pipeline : [];
+    // Picks are the "Name (DUNS)" labels from /api/scenario-options.
+    const dunsPicks = picks
+      .map((label) => parseShipperLabel(String(label ?? '')))
+      .filter(Boolean)
+      .map((p) => p.duns);
+    if (dunsPicks.length) picked = new Set(dunsPicks);
+  }
+
+  // One row per DUNS. A pipeline can appear several times in the reference
+  // table (one row per source feed), so prefer a row carrying a usable
+  // amendment mode over one that only says "NA".
+  const byDuns = new Map();
+  const unusable = new Map();
+  for (const row of reference) {
+    const duns = String(row.duns).trim();
+    if (picked && !picked.has(duns)) continue;
+    if (!usableMode(row.mode)) {
+      if (!byDuns.has(duns)) unusable.set(duns, row.name);
+      continue;
+    }
+    unusable.delete(duns);
+    if (!byDuns.has(duns)) byDuns.set(duns, { duns, name: row.name, mode: String(row.mode).trim() });
+  }
+
+  const rows = [...byDuns.values()];
+  if (!rows.length) {
+    // Leave the register EMPTY rather than half-populated: the pipeline reads
+    // an empty register as "nothing configured, everything passes", which is a
+    // safer failure than rejecting every contract in the feed.
+    await sql.query(`DELETE FROM ${PIPELINE_SCHEMA}.pipeline_attributes`);
+    return {
+      applied: false,
+      unusable: [...unusable.entries()].map(([duns, name]) => ({ duns, name })),
+      reason: 'no onboarded pipeline has a usable amendment mode — gate left open',
+    };
+  }
+
+  // Atomic replace, same as the shipper scope: the register is exactly this
+  // scenario's pipelines, never a mix of old and new rows.
+  await sql.transaction([
+    sql.query(`DELETE FROM ${PIPELINE_SCHEMA}.pipeline_attributes`),
+    sql.query(
+      `INSERT INTO ${PIPELINE_SCHEMA}.pipeline_attributes (tspduns, tspname, amendment_reporting)
+       SELECT u.duns, u.name, u.mode
+       FROM unnest($1::text[], $2::text[], $3::text[]) AS u(duns, name, mode)`,
+      [rows.map((r) => r.duns), rows.map((r) => r.name), rows.map((r) => r.mode)]
+    ),
+  ]);
+
+  return {
+    applied: true,
+    scoped: Boolean(picked),
+    pipelines: rows.map((r) => ({ duns: r.duns, name: r.name })),
+    unusable: [...unusable.entries()].map(([duns, name]) => ({ duns, name })),
   };
 }

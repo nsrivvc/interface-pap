@@ -148,14 +148,15 @@ async function jobWrites(job, headers) {
   if (done && logCache.has(job.id)) return logCache.get(job.id);
 
   const text = await jobLogText(job.id, headers);
-  if (!text) return [];
-  const { transformations } = parseRunnerLog(text);
+  if (!text) return { transformations: [], rejected: [] };
+  const { transformations, rejected } = parseRunnerLog(text);
+  const parsed = { transformations, rejected };
 
   if (done) {
     if (logCache.size >= LOG_CACHE_MAX) logCache.delete(logCache.keys().next().value);
-    logCache.set(job.id, transformations);
+    logCache.set(job.id, parsed);
   }
-  return transformations;
+  return parsed;
 }
 
 /**
@@ -219,8 +220,16 @@ export async function pipelineRunStatus(files, sinceIso, { withWrites = false } 
 
   // Read every started job's log. Queued jobs have nothing to say yet.
   const jobs = runs.flatMap((x) => x.jobs || []).filter((j) => j.status !== 'queued');
-  const perJob = await Promise.all(jobs.map((j) => jobWrites(j, headers).catch(() => [])));
-  return { repo: REPO, runs, writes: summarizeWrites(perJob.flat()) };
+  const empty = { transformations: [], rejected: [] };
+  const perJob = await Promise.all(jobs.map((j) => jobWrites(j, headers).catch(() => empty)));
+  return {
+    repo: REPO,
+    runs,
+    writes: summarizeWrites(
+      perJob.flatMap((r) => r.transformations),
+      perJob.flatMap((r) => r.rejected)
+    ),
+  };
 }
 
 /**

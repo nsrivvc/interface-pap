@@ -14,7 +14,7 @@ import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
 import { triggerPipeline, triggerIngest, pipelineRunStatus, cancelPipelineRuns } from './github.js';
-import { applyScenarioScope } from './scope.js';
+import { applyScenarioScope, applyScenarioPipelines } from './scope.js';
 import { powerbiAadToken, powerbiConfigured, goldReportEmbed } from './powerbi.js';
 import { provider, FEED_KEYS, feedSummaries } from './providers/index.js';
 
@@ -977,7 +977,11 @@ app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
 // scenario alone.
 app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => {
   const scope = await applyScenarioScope(req.body?.scenarioId);
-  res.json({ ...(await triggerPipeline(req.body?.sources)), scope });
+  // The scenario's Pipeline picks become the run's ONBOARDING REGISTER: a
+  // contract whose TSP is not in it is held back at deduplication(p1) and
+  // reported, while registered pipelines in the same load process normally.
+  const pipelines = await applyScenarioPipelines(req.body?.scenarioId);
+  res.json({ ...(await triggerPipeline(req.body?.sources)), scope, pipelines });
 }));
 
 // Dispatch one source's ingest-only (stage 1-2) workflow — Manual Workflow panel
