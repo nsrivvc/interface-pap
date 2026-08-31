@@ -1666,14 +1666,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
                     )}
                     {thisRun.github.pipelines.unusable?.length > 0 && (
                       <div className="gh-scope-warn">
-                        ⚠ Not registered, so their contracts will be rejected:{' '}
+                        ⚠ Left out of the register:{' '}
                         {thisRun.github.pipelines.unusable
                           .map((p) => `${p.name || '(no name)'} (${p.duns})`)
                           .join(', ')}
                         . Their row in Configure Components → Pipelines has no usable
                         AmendmentReporting — set it to “All Data” or “Changes Only” (“NA” is
                         only meaningful on an IOC-sourced row that also has a non-NA row for
-                        the same DUNS).
+                        the same DUNS). This is about the reference table, not this feed: it
+                        only costs you something if the load actually carries one of their
+                        contracts, and then that contract is held back and listed below.
                       </div>
                     )}
                   </div>
