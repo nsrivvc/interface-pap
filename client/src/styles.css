@@ -2301,3 +2301,8 @@ td.json-cell {
   color: var(--navy);
   font-size: 0.78rem;
 }
+.gate-reject-copies {
+  font-weight: 500;
+  color: var(--slate);
+  font-size: 0.72rem;
+}

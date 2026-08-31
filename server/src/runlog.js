@@ -74,8 +74,13 @@ const RE = {
   // (DUNS, name) is not in the pipeline_attributes register never reaches
   // staging — the rest of the load processes normally, so this is per-TSP news
   // the run card has to show rather than a run-wide failure.
-  //   pipeline_rejected duns=964493527 name=Stallion Gas Storage LLC rows=1 feed=firm
-  pipelineRejected: /pipeline_rejected duns=(\S*) name=(.*?) rows=(\d+) feed=(\S*)/,
+  // CONTRACTS is the meaningful count; `rows` is how many copies of them sit in
+  // the append-only Bronze archive, which grows every time the same file is
+  // loaded again. `contracts=` is absent on runs from before that distinction
+  // existed, so the row count stands in.
+  //   pipeline_rejected duns=964493527 name=Stallion … contracts=1 rows=2 feed=firm
+  pipelineRejected:
+    /pipeline_rejected duns=(\S*) name=(.*?)(?: contracts=(\d+))? rows=(\d+) feed=(\S*)/,
 
   // Stage 2 is a standalone loader (json_to_raw.py), not a registered
   // transformation — it never goes through run_one, so it has no "[name]"
@@ -243,7 +248,14 @@ export function parseRunnerLog(text) {
       continue;
     }
     if ((m = RE.pipelineRejected.exec(line))) {
-      const rec = { duns: m[1], name: m[2].trim(), rows: Number(m[3]), feed: m[4] };
+      const rows = Number(m[4]);
+      const rec = {
+        duns: m[1],
+        name: m[2].trim(),
+        contracts: m[3] === undefined ? rows : Number(m[3]),
+        rows,
+        feed: m[5],
+      };
       rejected.set(`${rec.duns}|${rec.name}`, rec); // same TSP logged once per job
       continue;
     }
@@ -382,6 +394,7 @@ export function summarizeWrites(transformations, rejections = []) {
     anyRebuilt: steps.some((s) => s.mode === 'rebuilt'),
     // Contracts held back by the pipeline onboarding gate, if any.
     rejected,
+    rejectedContracts: rejected.reduce((sum, r) => sum + (r.contracts || 0), 0),
     rejectedRows: rejected.reduce((sum, r) => sum + (r.rows || 0), 0),
     transformations: all,
   };

@@ -221,15 +221,21 @@ function WriteSemantics({ writes }) {
       {rejected.length > 0 && (
         <div className="gate-reject">
           <div className="gate-reject-head">
-            ⚠ {writes.rejectedRows} contract row
-            {writes.rejectedRows === 1 ? '' : 's'} rejected — pipeline not registered
+            ⚠ {writes.rejectedContracts} contract
+            {writes.rejectedContracts === 1 ? '' : 's'} rejected — pipeline not registered
           </div>
           {rejected.map((r) => (
             <div key={`${r.duns}|${r.name}`} className="gate-reject-row">
               <span className="gate-reject-name">{r.name || '(no name)'}</span>
               <span className="gate-reject-duns">{r.duns || '(no duns)'}</span>
               <span className="gate-reject-rows">
-                {r.rows} row{r.rows === 1 ? '' : 's'} held back
+                {r.contracts} contract{r.contracts === 1 ? '' : 's'} held back
+                {/* Bronze keeps every load, so the archive can hold several
+                    copies of the same rejected contract. Say so rather than
+                    letting the two numbers look contradictory. */}
+                {r.rows > r.contracts && (
+                  <span className="gate-reject-copies"> · {r.rows} archived rows</span>
+                )}
               </span>
             </div>
           ))}
