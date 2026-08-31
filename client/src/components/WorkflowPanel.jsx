@@ -299,6 +299,51 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const removePick = (key, i) =>
     setScenarioPicks((p) => ({ ...p, [key]: p[key].filter((_, idx) => idx !== i) }));
 
+  // Every field that can hold more than one value. Source is one-per-scenario,
+  // so there is nothing to "add all" of.
+  const multiFields = SCENARIO_FIELDS.filter((f) => !f.single);
+  const choicesFor = (key) => scenarioOptions?.[key] || [];
+  const chosenFor = (key) => (scenarioPicks[key] || []).filter(Boolean);
+  const fieldFull = (key) => {
+    const n = choicesFor(key).length;
+    return n > 0 && chosenFor(key).length === n;
+  };
+
+  // Total options across every multi-value reference field, and whether the
+  // whole form already holds them. Fields with no options yet (a reference
+  // table that is empty or missing) are ignored rather than blocking "full".
+  const populatedFields = multiFields.filter((f) => choicesFor(f.key).length > 0);
+  const totalChoices = populatedFields.reduce((n, f) => n + choicesFor(f.key).length, 0);
+  const everythingChosen =
+    populatedFields.length > 0 && populatedFields.every((f) => fieldFull(f.key));
+
+  /** Fill EVERY reference field with all of its options, or clear them all. */
+  const toggleEverything = () => {
+    const clearing = everythingChosen;
+    setScenarioPicks((p) => {
+      const next = { ...p };
+      for (const f of populatedFields) next[f.key] = clearing ? [''] : [...choicesFor(f.key)];
+      return next;
+    });
+    autoShippersRef.current = []; // the user now owns every pick — see toggleAll
+  };
+
+  /**
+   * Select every option for a field, or clear it when they are all already in.
+   *
+   * Clicking this is the user taking manual control of the field, so anything
+   * the pipeline mapping put there stops counting as auto-filled — otherwise
+   * the next pipeline change would retract picks the user just asked for.
+   */
+  const toggleAll = (key, choices) => {
+    setScenarioPicks((p) => {
+      const chosen = (p[key] || []).filter(Boolean);
+      const everything = choices.length > 0 && chosen.length === choices.length;
+      return { ...p, [key]: everything ? [''] : [...choices] };
+    });
+    if (key === 'shipper') autoShippersRef.current = [];
+  };
+
   // Pipeline DUNS -> the shippers that trade on it, from /api/scenario-options.
   // Not reference data anyone maintains: it is read off the loaded contracts.
   const [pipelineShippers, setPipelineShippers] = useState({});
@@ -857,13 +902,48 @@ export default function WorkflowPanel({ onPipelineRan }) {
           onKeyDown={(e) => e.key === 'Enter' && createScenario()}
         />
       </div>
+      {totalChoices > 0 && (
+        <div className="scenario-bulk">
+          <button type="button" className="scenario-bulk-btn" onClick={toggleEverything}>
+            {everythingChosen
+              ? '✕ Clear every reference field'
+              : `＋ Add all ${totalChoices} reference options`}
+          </button>
+          <span className="scenario-bulk-note">
+            {everythingChosen
+              ? 'Every pipeline, shipper, location and pairing is pinned.'
+              : `Pins every option across ${populatedFields
+                  .map((f) => f.label.toLowerCase())
+                  .join(', ')}.`}
+          </span>
+        </div>
+      )}
       <div className="scenario-rows">
         {SCENARIO_FIELDS.map((f) => {
           const picks = scenarioPicks[f.key] || [''];
           const choices = scenarioOptions?.[f.key] || [];
+          const chosen = picks.filter(Boolean);
+          const allChosen = choices.length > 0 && chosen.length === choices.length;
           return (
             <div key={f.key} className="scenario-field-group">
-              <label>{f.label}</label>
+              <div className="scenario-field-head">
+                <label>{f.label}</label>
+                {/* Single-value fields (Source) have nothing to add all of. */}
+                {!f.single && choices.length > 1 && (
+                  <button
+                    type="button"
+                    className="scenario-select-all"
+                    title={
+                      allChosen
+                        ? `Remove every ${f.label.toLowerCase()}`
+                        : `Add all ${choices.length} ${f.label.toLowerCase()} options`
+                    }
+                    onClick={() => toggleAll(f.key, choices)}
+                  >
+                    {allChosen ? 'Clear all' : `Add all ${choices.length}`}
+                  </button>
+                )}
+              </div>
               {f.key === 'shipper' && autoShippersRef.current.length > 0 && (
                 <span className="scenario-auto-note">
                   {autoShippersRef.current.length} filled in from the selected pipeline

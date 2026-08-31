@@ -398,10 +398,34 @@ button {
   flex-direction: column;
   gap: 8px;
 }
-.scenario-field-group > label {
+/* Label sits on a row with the field's "Add all" control, so it is no longer a
+   direct child — match it as a descendant. */
+.scenario-field-group label {
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--slate);
+}
+.scenario-field-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* Bulk select/clear for a multi-value field. A quiet text button: it is a
+   convenience beside the label, not a primary action competing with Save. */
+.scenario-select-all {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scenario-select-all:hover {
+  border-color: var(--orange);
+  background: #fdf0e5;
 }
 /* "2 filled in from the selected pipeline" — sits under the Shipper label when
    the pipeline mapping has pre-filled rows, so an auto-filled pick is never
@@ -2209,5 +2233,36 @@ td.json-cell {
   border-top: 1px solid #f0d9c2;
   font-size: 0.75rem;
   line-height: 1.5;
+  color: var(--slate);
+}
+
+/* ---- Scenario: fill every reference field at once ----
+   The per-field pills stay for "all shippers but one pipeline"; this is the
+   coarse version that pins the whole reference set in one click. */
+.scenario-bulk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 4px 0 14px;
+}
+.scenario-bulk-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--orange);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scenario-bulk-btn:hover {
+  background: var(--orange);
+  color: #fff;
+}
+.scenario-bulk-note {
+  font-size: 0.74rem;
   color: var(--slate);
 }
