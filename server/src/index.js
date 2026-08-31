@@ -774,41 +774,78 @@ app.get('/api/scenarios', requireAuth, wrap(async (req, res) => {
 // contributes no mapping, which is why Awards and IOC (no TSP identity on the
 // record) are not listed.
 const FEED_TSP_SHIPPER_COLUMNS = {
-  'bronze.gtran_firm': { duns: 'tspduns', shipper: 'kholder' },
-  'bronze.gtran_it': { duns: 'tspduns', shipper: 'kholder' },
+  'bronze.gtran_firm': {
+    duns: 'tspduns', tspname: 'tspname', shipper: 'kholder', shippername: 'kholdername',
+  },
+  'bronze.gtran_it': {
+    duns: 'tspduns', tspname: 'tspname', shipper: 'kholder', shippername: 'kholdername',
+  },
 };
 
 /**
  * pipeline DUNS -> the shipper option labels that appear on its contracts.
  *
- * The relationship is not reference data anybody maintains — it is a fact of
- * the loaded contracts, so it is read straight from Bronze. Labels are built
- * to match the `shipper` options EXACTLY (name + parenthesised number, from
- * public.shipping), because the client selects dropdown values with them; a
- * K-holder with no row in the shipping table is therefore left out rather than
- * offered as something the dropdown cannot represent.
+ * The relationship is not reference data anybody maintains — it exists only on
+ * the contracts themselves (tspduns alongside kholder). Reading it live off
+ * Bronze was too fragile: Bronze is wiped and reloaded routinely, and a
+ * scenario is a PLANNING artifact that has to work BEFORE a load, so a mapping
+ * that vanishes with the contracts is useless exactly when it is needed.
+ *
+ * So it is LEARNED and KEPT. Every time the panel loads, whatever pairs Bronze
+ * currently holds are folded into public.pipeline_shipper_map; the map is then
+ * what answers the question. Once a pipeline's contracts have been seen even
+ * once, picking it fills in its shippers forever, wipe or no wipe.
+ *
+ * Labels still come from public.shipping, matching the `shipper` options
+ * EXACTLY, because the client selects dropdown values with them — a remembered
+ * K-holder with no row in the shipping table is left out rather than offered as
+ * something the dropdown cannot represent.
  */
+const ENSURE_SHIPPER_MAP = `
+  CREATE TABLE IF NOT EXISTS public.pipeline_shipper_map (
+    tspduns     text NOT NULL,
+    tspname     text,
+    kholder     text NOT NULL,
+    kholdername text,
+    seen_ts     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tspduns, kholder)
+  )`;
+
 async function pipelineShipperMap() {
-  const tables = Object.entries(FEED_TSP_SHIPPER_COLUMNS);
-  const map = {};
-  for (const [table, cols] of tables) {
+  await sql.query(ENSURE_SHIPPER_MAP);
+
+  // Learn from whatever is loaded right now. Empty feeds contribute nothing
+  // and, crucially, remove nothing — this only ever adds.
+  for (const [table, cols] of Object.entries(FEED_TSP_SHIPPER_COLUMNS)) {
     try {
-      const rows = await sql.query(
-        `SELECT DISTINCT btrim(b.${cols.duns}) AS duns,
-                s."KHolderName" AS name, s."KHolderNo" AS no
+      await sql.query(
+        `INSERT INTO public.pipeline_shipper_map (tspduns, tspname, kholder, kholdername)
+         SELECT DISTINCT btrim(b.${cols.duns}), b.${cols.tspname},
+                btrim(b.${cols.shipper}), b.${cols.shippername}
          FROM ${table} b
-         JOIN public.shipping s ON btrim(s."KHolderNo") = btrim(b.${cols.shipper})
-         WHERE b.${cols.duns} IS NOT NULL AND btrim(b.${cols.duns}) <> ''`
+         WHERE btrim(coalesce(b.${cols.duns}, '')) <> ''
+           AND btrim(coalesce(b.${cols.shipper}, '')) <> ''
+         ON CONFLICT (tspduns, kholder) DO UPDATE
+           SET tspname = EXCLUDED.tspname,
+               kholdername = EXCLUDED.kholdername,
+               seen_ts = now()`
       );
-      for (const r of rows) {
-        const label = r.no ? `${r.name} (${r.no})` : r.name;
-        if (!label) continue;
-        (map[r.duns] ||= []);
-        if (!map[r.duns].includes(label)) map[r.duns].push(label);
-      }
     } catch {
-      // Feed not loaded yet (or no shipping table) — contributes no mapping.
+      // Feed table absent — contributes no pairs.
     }
+  }
+
+  const rows = await sql.query(
+    `SELECT m.tspduns AS duns, s."KHolderName" AS name, s."KHolderNo" AS no
+     FROM public.pipeline_shipper_map m
+     JOIN public.shipping s ON btrim(s."KHolderNo") = btrim(m.kholder)`
+  );
+  const map = {};
+  for (const r of rows) {
+    const label = r.no ? `${r.name} (${r.no})` : r.name;
+    if (!label) continue;
+    (map[r.duns] ||= []);
+    if (!map[r.duns].includes(label)) map[r.duns].push(label);
   }
   for (const duns of Object.keys(map)) map[duns].sort();
   return map;
