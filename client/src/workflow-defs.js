@@ -32,6 +32,24 @@ export const shortSourceLabel = (key) => SOURCE_SHORT[key] || key;
 
 export const STORAGE_KEY = 'pap_workflows_v2';
 
+// A schedule used to hold ONE `time`; it now holds a `times` array so a
+// workflow can fire at several points in the day. Older saves are folded onto
+// the new shape here, so an existing workflow keeps the trigger it had.
+export function normalizeSchedule(schedule) {
+  if (!schedule) return null;
+  const raw = Array.isArray(schedule.times)
+    ? schedule.times
+    : schedule.time
+      ? [schedule.time]
+      : [];
+  const times = [...new Set(raw.filter(Boolean))].sort();
+  if (!times.length) return null;
+  return {
+    times,
+    tz: schedule.tz || Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
+
 export function loadWorkflows() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
@@ -42,6 +60,7 @@ export function loadWorkflows() {
         ...w,
         stageCount: Math.min(w.stageCount, STAGE_DEFS.length),
         sources: sources.length ? sources : ALL_SOURCE_KEYS,
+        schedule: normalizeSchedule(w.schedule),
         // Ids of the scenarios attached to this workflow (created on the
         // dashboard, stored in Neon) — stale ids are ignored at render time
         scenarios: Array.isArray(w.scenarios) ? w.scenarios : [],

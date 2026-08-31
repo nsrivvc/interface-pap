@@ -2266,3 +2266,11 @@ td.json-cell {
   font-size: 0.74rem;
   color: var(--slate);
 }
+
+/* One row per daily trigger time; the timezone is shared across them all. */
+.wf-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}

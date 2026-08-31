@@ -101,15 +101,80 @@ function dateKeyIn(tz) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz, dateStyle: 'short' }).format(new Date());
 }
 
-/** Human countdown until the next daily occurrence of "HH:MM" in the given timezone. */
-function nextRunIn(time, tz) {
-  const [th, tm] = time.split(':').map(Number);
+/**
+ * Human countdown to the SOONEST of a workflow's daily trigger times, in that
+ * workflow's own timezone. Times wrap: 23:50 seen at 00:10 is 23h 40m away,
+ * not negative, so the earliest upcoming one wins on a plain modulo.
+ */
+function nextRunIn(times, tz) {
   const [nh, nm] = currentTimeIn(tz).split(':').map(Number);
-  const diff = (th * 60 + tm - (nh * 60 + nm) + 1440) % 1440;
-  if (diff === 0) return 'now';
-  const h = Math.floor(diff / 60);
-  const m = diff % 60;
+  const now = nh * 60 + nm;
+  let soonest = null;
+  for (const time of times || []) {
+    if (!time) continue;
+    const [th, tm] = time.split(':').map(Number);
+    const diff = (th * 60 + tm - now + 1440) % 1440;
+    if (soonest === null || diff < soonest) soonest = diff;
+  }
+  if (soonest === null) return '';
+  if (soonest === 0) return 'now';
+  const h = Math.floor(soonest / 60);
+  const m = soonest % 60;
   return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+
+/** The times a workflow fires at, newest shape or old single-`time` saves. */
+const scheduleTimes = (schedule) =>
+  schedule?.times || (schedule?.time ? [schedule.time] : []);
+
+/**
+ * The trigger-time editor: any number of daily times, one shared timezone.
+ * Used by both the create and the edit form so they cannot drift apart.
+ */
+function TriggerTimes({ times, tz, setTimes, setTz }) {
+  const rows = times.length ? times : [''];
+  const update = (i, v) => setTimes(rows.map((t, idx) => (idx === i ? v : t)));
+  const remove = (i) => setTimes(rows.filter((_, idx) => idx !== i).filter(Boolean));
+  return (
+    <>
+      {rows.map((t, i) => (
+        <div key={i} className="wf-time-row">
+          <input type="time" value={t} onChange={(e) => update(i, e.target.value)} />
+          {(rows.length > 1 || t) && (
+            <button
+              type="button"
+              className="cc-remove"
+              title="Remove this trigger time"
+              onClick={() => remove(i)}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      ))}
+      <div className="wf-schedule-row" style={{ marginTop: 8 }}>
+        <select value={tz} onChange={(e) => setTz(e.target.value)}>
+          {TIMEZONES.map((z) => (
+            <option key={z} value={z}>{z.replaceAll('_', ' ')}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn btn-outline"
+          // A blank row is the slot for the next time — no point stacking two.
+          disabled={rows.some((t) => !t)}
+          onClick={() => setTimes([...rows, ''])}
+        >
+          ＋ Add time
+        </button>
+        {rows.some(Boolean) && (
+          <button type="button" className="btn btn-outline" onClick={() => setTimes([])}>
+            Clear all
+          </button>
+        )}
+      </div>
+    </>
+  );
 }
 
 // The reference points a scenario pins, shown under the scenario dropdowns
@@ -445,7 +510,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [draftName, setDraftName] = useState('');
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
   const [draftScenario, setDraftScenario] = useState(''); // one scenario id (as string)
-  const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
+  const [draftTimes, setDraftTimes] = useState([]); // ["HH:MM", …], empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
   // Run state:
   // { id, trigger, batchId, sourceStates, stageStates, github, githubRuns,
@@ -490,7 +555,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setDraftName('');
     setDraftSources(ALL_SOURCE_KEYS);
     setDraftScenario('');
-    setDraftTime('');
+    setDraftTimes([]);
     setDraftTz(LOCAL_TZ);
   };
 
@@ -499,7 +564,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const name = draftName.trim() || `Workflow ${workflows.length + 1}`;
     // Keep sources in pipeline order regardless of click order
     const sources = ALL_SOURCE_KEYS.filter((k) => draftSources.includes(k));
-    const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
+    const times = [...new Set(draftTimes.filter(Boolean))].sort();
+    const schedule = times.length ? { times, tz: draftTz } : null;
     // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5.
     // Components (pipelines, shippers, rec-del pairings) live in their own
     // warehouse tables now, not on the workflow itself.
@@ -536,7 +602,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
       name: wf.name,
       sources: wf.sources,
       scenario: String((wf.scenarios || [])[0] ?? ''),
-      time: wf.schedule?.time || '',
+      times: scheduleTimes(wf.schedule),
       tz: wf.schedule?.tz || LOCAL_TZ,
     });
   };
@@ -563,7 +629,10 @@ export default function WorkflowPanel({ onPipelineRan }) {
             name: editDraft.name.trim() || w.name,
             sources: ALL_SOURCE_KEYS.filter((k) => editDraft.sources.includes(k)),
             scenarios: editDraft.scenario ? [Number(editDraft.scenario)] : [],
-            schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
+            schedule: (() => {
+              const t = [...new Set((editDraft.times || []).filter(Boolean))].sort();
+              return t.length ? { times: t, tz: editDraft.tz } : null;
+            })(),
           }
         : w
     );
@@ -712,10 +781,15 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const tick = () => {
       if (busyRef.current) return;
       for (const wf of workflowsRef.current) {
-        if (!wf.schedule) continue;
-        const { time, tz } = wf.schedule;
-        if (currentTimeIn(tz) !== time) continue;
-        const fireKey = `${dateKeyIn(tz)} ${time}`;
+        const times = scheduleTimes(wf.schedule);
+        if (!times.length) continue;
+        const { tz } = wf.schedule;
+        // Fire on whichever of the workflow's times is on the clock right now.
+        const due = times.find((t) => t === currentTimeIn(tz));
+        if (!due) continue;
+        // The key carries the time, so several triggers in one day each fire
+        // once rather than the first one blocking the rest.
+        const fireKey = `${dateKeyIn(tz)} ${due}`;
         if (firedRef.current[wf.id] === fireKey) continue;
         firedRef.current[wf.id] = fireKey;
         runWorkflow(wf, 'auto');
@@ -1158,29 +1232,21 @@ export default function WorkflowPanel({ onPipelineRan }) {
           {/* Optional scheduled trigger time */}
           <div className="wf-schedule">
             <div className="wf-sources-head" style={{ marginBottom: 8 }}>
-              <strong>Trigger time (optional)</strong>
-              <span className="muted">run this workflow automatically every day at a set time</span>
+              <strong>Trigger times (optional)</strong>
+              <span className="muted">
+                run this workflow automatically every day — add as many times as you need
+              </span>
             </div>
-            <div className="wf-schedule-row">
-              <input
-                type="time"
-                value={draftTime}
-                onChange={(e) => setDraftTime(e.target.value)}
-              />
-              <select value={draftTz} onChange={(e) => setDraftTz(e.target.value)}>
-                {TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>{tz.replaceAll('_', ' ')}</option>
-                ))}
-              </select>
-              {draftTime && (
-                <button type="button" className="btn btn-outline" onClick={() => setDraftTime('')}>
-                  Clear
-                </button>
-              )}
-            </div>
+            <TriggerTimes
+              times={draftTimes}
+              tz={draftTz}
+              setTimes={setDraftTimes}
+              setTz={setDraftTz}
+            />
             <p className="muted" style={{ marginTop: 8, fontSize: '0.78rem', color: 'var(--slate)' }}>
-              {draftTime
-                ? `Will run daily at ${draftTime} (${draftTz.replaceAll('_', ' ')}) while the dashboard is open.`
+              {draftTimes.filter(Boolean).length
+                ? `Will run daily at ${[...new Set(draftTimes.filter(Boolean))].sort().join(', ')} ` +
+                  `(${draftTz.replaceAll('_', ' ')}) while the dashboard is open.`
                 : 'No trigger time set — this workflow will be manual-only. Pick a time above to schedule it.'}
             </p>
           </div>
@@ -1278,33 +1344,15 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   </>
                 )}
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
-                  <strong>Trigger time</strong>
-                  <span className="muted">runs daily at this time — leave empty for manual-only</span>
+                  <strong>Trigger times</strong>
+                  <span className="muted">runs daily at these times — leave empty for manual-only</span>
                 </div>
-                <div className="wf-schedule-row">
-                  <input
-                    type="time"
-                    value={editDraft.time}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, time: e.target.value }))}
-                  />
-                  <select
-                    value={editDraft.tz}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, tz: e.target.value }))}
-                  >
-                    {TIMEZONES.map((tz) => (
-                      <option key={tz} value={tz}>{tz.replaceAll('_', ' ')}</option>
-                    ))}
-                  </select>
-                  {editDraft.time && (
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={() => setEditDraft((d) => ({ ...d, time: '' }))}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
+                <TriggerTimes
+                  times={editDraft.times || []}
+                  tz={editDraft.tz}
+                  setTimes={(times) => setEditDraft((d) => ({ ...d, times }))}
+                  setTz={(tz) => setEditDraft((d) => ({ ...d, tz }))}
+                />
                 <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                   <button
                     className="btn btn-navy"
@@ -1342,19 +1390,19 @@ export default function WorkflowPanel({ onPipelineRan }) {
                         {s.name}
                       </span>
                     ))}
-                  {wf.schedule && (
+                  {scheduleTimes(wf.schedule).length > 0 && (
                     <span className="badge scheduled" style={{ marginLeft: 6 }}>
                       scheduled
                     </span>
                   )}
                 </h3>
-                {wf.schedule ? (
+                {scheduleTimes(wf.schedule).length ? (
                   <div className="wf-schedule-line">
                     <span className="wf-schedule-clock">🕒</span>
-                    Runs daily at <strong>{wf.schedule.time}</strong>
+                    Runs daily at <strong>{scheduleTimes(wf.schedule).join(', ')}</strong>
                     <span className="wf-schedule-tz">{wf.schedule.tz.replaceAll('_', ' ')}</span>
                     <span className="wf-schedule-next">
-                      next run {nextRunIn(wf.schedule.time, wf.schedule.tz)}
+                      next run {nextRunIn(scheduleTimes(wf.schedule), wf.schedule.tz)}
                     </span>
                     <button
                       type="button"
