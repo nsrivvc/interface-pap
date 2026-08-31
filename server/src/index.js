@@ -894,29 +894,29 @@ app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
   });
 }));
 
+// Keep only the known reference points; each holds one or more values (a lone
+// string is accepted and folded into a one-element array). Shared by create and
+// update so the two can never validate a scenario differently.
+function normalizeScenarioConfig(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const config = {};
+  for (const f of SCENARIO_FIELDS) {
+    const arr = Array.isArray(raw[f]) ? raw[f] : typeof raw[f] === 'string' ? [raw[f]] : [];
+    const vals = [
+      ...new Set(
+        arr.filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim().slice(0, 300))
+      ),
+    ].slice(0, 50);
+    if (vals.length) config[f] = vals;
+  }
+  return Object.keys(config).length ? config : null;
+}
+
 app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const description = String(req.body?.description || '').trim();
   if (!name) throw new Error('Scenario name is required.');
-  // Keep only the known reference points; each holds one or more values
-  // (a lone string is accepted and folded into a one-element array)
-  const raw = req.body?.config;
-  let config = null;
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    config = {};
-    for (const f of SCENARIO_FIELDS) {
-      const arr = Array.isArray(raw[f]) ? raw[f] : typeof raw[f] === 'string' ? [raw[f]] : [];
-      const vals = [
-        ...new Set(
-          arr
-            .filter((v) => typeof v === 'string' && v.trim())
-            .map((v) => v.trim().slice(0, 300))
-        ),
-      ].slice(0, 50);
-      if (vals.length) config[f] = vals;
-    }
-    if (!Object.keys(config).length) config = null;
-  }
+  const config = normalizeScenarioConfig(req.body?.config);
   if (!(await ensureScenarios())) {
     throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
   }
@@ -924,6 +924,33 @@ app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
     INSERT INTO scenarios (name, description, config)
     VALUES (${name}, ${description || null}, ${config ? JSON.stringify(config) : null}::jsonb)
     RETURNING *`;
+  res.json({ scenario });
+}));
+
+// Edit a scenario IN PLACE. Keeping the id is the whole point: workflows
+// reference a scenario by id, so editing must not orphan them the way
+// delete-then-recreate would (a new row gets a new id, and the workflow's
+// dispatch then fails with "the attached scenario no longer exists").
+app.put('/api/scenarios/:id', requireAuth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new Error('Bad scenario id.');
+  const name = String(req.body?.name || '').trim();
+  if (!name) throw new Error('Scenario name is required.');
+  const description = String(req.body?.description || '').trim();
+  const config = normalizeScenarioConfig(req.body?.config);
+  if (!(await ensureScenarios())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const [scenario] = await sql`
+    UPDATE scenarios
+    SET name = ${name},
+        description = ${description || null},
+        config = ${config ? JSON.stringify(config) : null}::jsonb
+    WHERE id = ${id}
+    RETURNING *`;
+  if (!scenario) {
+    throw new Error(`Scenario ${id} no longer exists — it may have been deleted in another tab.`);
+  }
   res.json({ scenario });
 }));
 

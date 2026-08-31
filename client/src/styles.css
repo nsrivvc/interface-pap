@@ -2274,3 +2274,30 @@ td.json-cell {
   gap: 8px;
   margin-bottom: 6px;
 }
+
+/* Edit affordance on a saved scenario, and the banner while one is loaded. */
+.scenario-edit-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.scenario-edit-btn:hover {
+  border-color: var(--orange);
+  background: #fdf0e5;
+}
+.scenario-editing-note {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--orange);
+  border-radius: 6px;
+  background: #fdf0e5;
+  color: var(--navy);
+  font-size: 0.78rem;
+}

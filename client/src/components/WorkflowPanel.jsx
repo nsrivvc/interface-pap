@@ -415,9 +415,19 @@ export default function WorkflowPanel({ onPipelineRan }) {
   // Which shipper picks this mapping put there, so changing a pipeline can
   // retract ITS shippers without disturbing any the user added by hand.
   const autoShippersRef = useRef([]);
+  // Set while a saved scenario is being loaded into the form, to stop the
+  // fill from widening picks that were deliberately narrowed.
+  const skipAutoFillRef = useRef(false);
   const pipelineKey = (scenarioPicks.pipeline || []).join('|');
 
   useEffect(() => {
+    // Loading a saved scenario: its shippers are already exactly what was
+    // stored, so take them as-is and treat them as the user's own.
+    if (skipAutoFillRef.current) {
+      skipAutoFillRef.current = false;
+      autoShippersRef.current = [];
+      return;
+    }
     // A pipeline is picked as "Name (DUNS)" — the DUNS is what maps.
     const derived = [];
     for (const label of scenarioPicks.pipeline || []) {
@@ -457,13 +467,52 @@ export default function WorkflowPanel({ onPipelineRan }) {
       });
   }, []);
 
+  // Which scenario the form is editing, or null when it is creating a new one.
+  // Editing reuses the create form outright rather than duplicating it, so the
+  // bulk-add buttons and the pipeline->shipper fill work the same either way.
+  const [editingScenario, setEditingScenario] = useState(null);
+
+  const startEditScenario = (s) => {
+    setEditingScenario(s);
+    setScenarioName(s.name || '');
+    setScenarioDesc(s.description || '');
+    setScenarioPicks({
+      ...emptyPicks(),
+      ...Object.fromEntries(
+        SCENARIO_FIELDS.map((f) => {
+          const v = s.config?.[f.key];
+          const arr = Array.isArray(v) ? v : v ? [v] : [];
+          return [f.key, arr.length ? arr : ['']];
+        })
+      ),
+    });
+    // Load the scenario's shippers EXACTLY as saved. Without this the
+    // pipeline->shipper fill would see the pipelines arrive and re-add the
+    // full mapped set, silently widening a scenario that was deliberately
+    // narrowed.
+    skipAutoFillRef.current = true;
+    setScenarioError('');
+    if (!scenariosOpen) toggleScenarios();
+  };
+
+  const cancelEditScenario = () => {
+    setEditingScenario(null);
+    setScenarioName('');
+    setScenarioDesc('');
+    setScenarioPicks(emptyPicks());
+    autoShippersRef.current = [];
+    setScenarioError('');
+  };
+
   const createScenario = async () => {
     if (!scenarioName.trim() || scenarioBusy) return;
     setScenarioBusy(true);
     setScenarioError('');
     try {
-      const { scenario } = await api('/api/scenarios', {
-        method: 'POST',
+      const { scenario } = await api(
+        editingScenario ? `/api/scenarios/${editingScenario.id}` : '/api/scenarios',
+        {
+        method: editingScenario ? 'PUT' : 'POST',
         body: {
           name: scenarioName.trim(),
           description: scenarioDesc.trim(),
@@ -473,11 +522,18 @@ export default function WorkflowPanel({ onPipelineRan }) {
             )
           ),
         },
-      });
-      setScenarios((s) => [...s, scenario]);
+      }
+      );
+      setScenarios((list) =>
+        list.some((x) => x.id === scenario.id)
+          ? list.map((x) => (x.id === scenario.id ? scenario : x))
+          : [...list, scenario]
+      );
+      setEditingScenario(null);
       setScenarioName('');
       setScenarioDesc('');
       setScenarioPicks(emptyPicks());
+      autoShippersRef.current = [];
     } catch (err) {
       setScenarioError(err.message);
     } finally {
@@ -959,6 +1015,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
         shippers picked) = every shipper passes.
       </p>
       {scenarioError && <div className="status-line err">{scenarioError}</div>}
+      {editingScenario && (
+        <div className="scenario-editing-note">
+          ✎ Editing <strong>{editingScenario.name}</strong> — it keeps its id, so any workflow
+          it is attached to stays attached.
+        </div>
+      )}
       <div className="scenario-create">
         <input
           type="text"
@@ -1073,8 +1135,17 @@ export default function WorkflowPanel({ onPipelineRan }) {
           disabled={!scenarioName.trim() || scenarioBusy}
           onClick={createScenario}
         >
-          {scenarioBusy ? '⟳ Saving…' : 'Save Scenario'}
+          {scenarioBusy
+            ? '⟳ Saving…'
+            : editingScenario
+              ? 'Update Scenario'
+              : 'Save Scenario'}
         </button>
+        {editingScenario && (
+          <button type="button" className="btn btn-outline" onClick={cancelEditScenario}>
+            Cancel
+          </button>
+        )}
       </div>
       {scenarios.length > 0 ? (
         <div className="scenario-list">
@@ -1098,6 +1169,14 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                className="scenario-edit-btn"
+                title="Edit this scenario"
+                onClick={() => startEditScenario(s)}
+              >
+                ✎ Edit
+              </button>
               <button
                 type="button"
                 className="cc-remove"
