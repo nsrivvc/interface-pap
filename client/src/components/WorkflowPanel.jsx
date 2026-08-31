@@ -299,12 +299,49 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const removePick = (key, i) =>
     setScenarioPicks((p) => ({ ...p, [key]: p[key].filter((_, idx) => idx !== i) }));
 
+  // Pipeline DUNS -> the shippers that trade on it, from /api/scenario-options.
+  // Not reference data anyone maintains: it is read off the loaded contracts.
+  const [pipelineShippers, setPipelineShippers] = useState({});
+  // Which shipper picks this mapping put there, so changing a pipeline can
+  // retract ITS shippers without disturbing any the user added by hand.
+  const autoShippersRef = useRef([]);
+  const pipelineKey = (scenarioPicks.pipeline || []).join('|');
+
+  useEffect(() => {
+    // A pipeline is picked as "Name (DUNS)" — the DUNS is what maps.
+    const derived = [];
+    for (const label of scenarioPicks.pipeline || []) {
+      const duns = /\(([^()]+)\)\s*$/.exec(label || '')?.[1]?.trim();
+      for (const sh of (duns && pipelineShippers[duns]) || []) {
+        if (!derived.includes(sh)) derived.push(sh);
+      }
+    }
+    const previous = autoShippersRef.current;
+    const unchanged =
+      derived.length === previous.length && derived.every((d, i) => d === previous[i]);
+    if (unchanged) return;
+
+    setScenarioPicks((p) => {
+      // Anything not placed by the last auto-fill is the user's own pick.
+      const manual = (p.shipper || []).filter((v) => v && !previous.includes(v));
+      const next = [...new Set([...derived, ...manual])];
+      return { ...p, shipper: next.length ? next : [''] };
+    });
+    autoShippersRef.current = derived;
+    // pipelineKey (not the array) so this settles instead of re-firing on every
+    // scenarioPicks change, including the one this effect itself makes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineKey, pipelineShippers]);
+
   useEffect(() => {
     api('/api/scenarios')
       .then((d) => setScenarios(d.scenarios))
       .catch((err) => setScenarioError(err.message));
     api('/api/scenario-options')
-      .then((d) => setScenarioOptions(d.options))
+      .then((d) => {
+        setScenarioOptions(d.options);
+        setPipelineShippers(d.pipelineShippers || {});
+      })
       .catch(() => {
         // dropdowns just render empty — the create form still works
       });
@@ -827,6 +864,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
           return (
             <div key={f.key} className="scenario-field-group">
               <label>{f.label}</label>
+              {f.key === 'shipper' && autoShippersRef.current.length > 0 && (
+                <span className="scenario-auto-note">
+                  {autoShippersRef.current.length} filled in from the selected pipeline
+                  {(scenarioPicks.pipeline || []).filter(Boolean).length > 1 ? 's' : ''} — edit freely
+                </span>
+              )}
               {picks.map((val, i) => (
                 <div key={i} className="scenario-row">
                   <select

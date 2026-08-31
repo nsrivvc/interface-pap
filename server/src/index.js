@@ -768,6 +768,52 @@ app.get('/api/scenarios', requireAuth, wrap(async (req, res) => {
 
 // Dropdown choices for a scenario, one list per reference data point,
 // compiled from the live reference tables (and the source option list).
+// Which Bronze columns carry the pipeline (TSP) and the shipper (K-holder) on
+// each feed, so a scenario can map one to the other. Mirrors PIPELINE_KEYS and
+// ShipperMapping.keys in the pipeline repo: a feed absent here simply
+// contributes no mapping, which is why Awards and IOC (no TSP identity on the
+// record) are not listed.
+const FEED_TSP_SHIPPER_COLUMNS = {
+  'bronze.gtran_firm': { duns: 'tspduns', shipper: 'kholder' },
+  'bronze.gtran_it': { duns: 'tspduns', shipper: 'kholder' },
+};
+
+/**
+ * pipeline DUNS -> the shipper option labels that appear on its contracts.
+ *
+ * The relationship is not reference data anybody maintains — it is a fact of
+ * the loaded contracts, so it is read straight from Bronze. Labels are built
+ * to match the `shipper` options EXACTLY (name + parenthesised number, from
+ * public.shipping), because the client selects dropdown values with them; a
+ * K-holder with no row in the shipping table is therefore left out rather than
+ * offered as something the dropdown cannot represent.
+ */
+async function pipelineShipperMap() {
+  const tables = Object.entries(FEED_TSP_SHIPPER_COLUMNS);
+  const map = {};
+  for (const [table, cols] of tables) {
+    try {
+      const rows = await sql.query(
+        `SELECT DISTINCT btrim(b.${cols.duns}) AS duns,
+                s."KHolderName" AS name, s."KHolderNo" AS no
+         FROM ${table} b
+         JOIN public.shipping s ON btrim(s."KHolderNo") = btrim(b.${cols.shipper})
+         WHERE b.${cols.duns} IS NOT NULL AND btrim(b.${cols.duns}) <> ''`
+      );
+      for (const r of rows) {
+        const label = r.no ? `${r.name} (${r.no})` : r.name;
+        if (!label) continue;
+        (map[r.duns] ||= []);
+        if (!map[r.duns].includes(label)) map[r.duns].push(label);
+      }
+    } catch {
+      // Feed not loaded yet (or no shipping table) — contributes no mapping.
+    }
+  }
+  for (const duns of Object.keys(map)) map[duns].sort();
+  return map;
+}
+
 app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
   const grab = async (key, query, toLabel) => {
     try {
@@ -805,6 +851,9 @@ app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
         (r) => `${r.ord != null ? `${r.ord}. ` : ''}${r.pat || ''}${r.p ? ` (${r.p})` : ''}`.trim()
       ),
     },
+    // Pipeline DUNS -> its contracts' shipper labels, so picking a pipeline in
+    // a scenario can fill in the shippers that actually trade on it.
+    pipelineShippers: await pipelineShipperMap().catch(() => ({})),
   });
 }));
 
