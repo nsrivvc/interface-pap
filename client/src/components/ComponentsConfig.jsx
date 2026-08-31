@@ -35,6 +35,28 @@ const blank = (v) => v === undefined || v === null || v === '';
 // "pipeline_type" and "PipelineType" all land on the same column.
 const headerKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+// Match a file's header row onto the table's columns: exact matches first, then
+// a second pass for headers that are a shortening of exactly one column left
+// over ("ContractDate" → "ContractDateStructure"). Returns one entry per
+// header — the column it feeds, or null if nothing fits.
+function matchHeaders(header, columns) {
+  const byKey = new Map(columns.map((c) => [headerKey(c.name), c]));
+  const matched = header.map((h) => byKey.get(headerKey(h)) || null);
+  const spare = columns.filter((c) => !matched.includes(c));
+  return matched.map((col, i) => {
+    if (col) return col;
+    const k = headerKey(header[i]);
+    if (!k) return null;
+    const near = spare.filter((c) => {
+      const ck = headerKey(c.name);
+      return !matched.includes(c) && (ck.startsWith(k) || k.startsWith(ck));
+    });
+    if (near.length !== 1) return null;
+    matched[i] = near[0]; // claim it so a later header can't take it too
+    return near[0];
+  });
+}
+
 const MAX_IMPORT_ROWS = 1000; // matches the server's per-upload cap
 const IMPORT_PREVIEW_ROWS = 3;
 
@@ -47,6 +69,7 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState('');
   const fileRef = useRef(null);
+  const importRef = useRef(null);
 
   // The pinned input row. AG Grid writes committed cell values straight onto
   // this object; the tick just re-renders so the Add button enables/disables.
@@ -67,6 +90,12 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
   useEffect(load, [load]);
 
   const editableCols = useMemo(() => (data?.columns || []).filter((c) => !c.auto), [data]);
+
+  // A parsed file lands below a grid that can be taller than the window, so
+  // bring the confirm step to the user rather than the other way round.
+  useEffect(() => {
+    if (pending) importRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [pending]);
 
   // Commit the pinned input row as a new table row
   const addFromDraft = useCallback(async () => {
@@ -107,8 +136,7 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
           );
         }
         const [header, ...body] = table;
-        const byKey = new Map(editableCols.map((c) => [headerKey(c.name), c]));
-        const mapped = header.map((h) => byKey.get(headerKey(h)) || null);
+        const mapped = matchHeaders(header, editableCols);
         const matched = mapped.filter(Boolean);
         if (!matched.length) {
           throw new Error(
@@ -138,6 +166,11 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
           rows,
           columns: matched.map((c) => c.name),
           ignored: header.filter((h, i) => !mapped[i] && h.trim() !== ''),
+          loose: header
+            .map((h, i) => (mapped[i] && headerKey(h) !== headerKey(mapped[i].name)
+              ? `${h.trim()} → ${mapped[i].name}`
+              : null))
+            .filter(Boolean),
           missing: editableCols.filter((c) => !matched.includes(c)).map((c) => c.name),
         });
       } catch (err) {
@@ -362,7 +395,7 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
           </div>
           {imported && <div className="status-line ok">{imported}</div>}
           {pending && (
-            <div className="cc-import">
+            <div className="cc-import" ref={importRef}>
               <div className="cc-import-head">
                 <strong>{pending.name}</strong>
                 <span>
@@ -370,6 +403,9 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
                   {pending.columns.length} of {editableCols.length} columns matched
                 </span>
               </div>
+              {pending.loose.length > 0 && (
+                <p className="cc-import-note">Matched by name: {pending.loose.join(', ')}</p>
+              )}
               {pending.ignored.length > 0 && (
                 <p className="cc-import-note">
                   Ignored (not a column here): {pending.ignored.join(', ')}
