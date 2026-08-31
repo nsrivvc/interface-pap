@@ -240,10 +240,12 @@ function WriteSemantics({ writes }) {
             </div>
           ))}
           <div className="gate-reject-fix">
-            Their TSP name and DUNS have no matching row in the pipeline attributes
-            register, so their contracts were not loaded. Add the pipeline to the
-            reference table (and to the scenario, if it pins specific pipelines) —
-            everything else in this load processed normally.
+            Their TSP is not in the run&apos;s onboarding register, so their contracts were
+            not loaded. Either the pipeline has no row in the reference table (add one, and
+            add it to the scenario if it pins specific pipelines), or its row was skipped
+            because its AmendmentReporting is not “All Data” or “Changes Only” — the run
+            panel above names any pipeline left out for that reason. Everything else in this
+            load processed normally.
           </div>
         </div>
       )}
@@ -1638,6 +1640,41 @@ export default function WorkflowPanel({ onPipelineRan }) {
                     )}
                     {thisRun.github.scope.unmatched?.length > 0 && (
                       <> (no DUNS found in: {thisRun.github.scope.unmatched.join(', ')})</>
+                    )}
+                  </div>
+                )}
+                {/* The onboarding register this run was given. Worth its own
+                    line because a pipeline can be in the reference table and
+                    still miss the register — see the warning below. */}
+                {thisRun.github.pipelines && (
+                  <div
+                    className={`gh-scope-line ${thisRun.github.pipelines.scoped ? 'scoped' : ''}`}
+                  >
+                    {thisRun.github.pipelines.applied ? (
+                      <>
+                        🛢 Pipeline register —{' '}
+                        {thisRun.github.pipelines.scoped
+                          ? 'the pipelines this scenario pins'
+                          : 'every onboarded pipeline'}
+                        : {thisRun.github.pipelines.pipelines.map((p) => p.name || p.duns).join(', ')}
+                      </>
+                    ) : (
+                      <>
+                        Pipeline register left empty — {thisRun.github.pipelines.reason}. Every
+                        pipeline passes.
+                      </>
+                    )}
+                    {thisRun.github.pipelines.unusable?.length > 0 && (
+                      <div className="gh-scope-warn">
+                        ⚠ Not registered, so their contracts will be rejected:{' '}
+                        {thisRun.github.pipelines.unusable
+                          .map((p) => `${p.name || '(no name)'} (${p.duns})`)
+                          .join(', ')}
+                        . Their row in Configure Components → Pipelines has no usable
+                        AmendmentReporting — set it to “All Data” or “Changes Only” (“NA” is
+                        only meaningful on an IOC-sourced row that also has a non-NA row for
+                        the same DUNS).
+                      </div>
                     )}
                   </div>
                 )}

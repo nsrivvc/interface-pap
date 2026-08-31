@@ -409,6 +409,7 @@ async function ensureComponentTable(spec) {
   try {
     for (const ddl of spec.ensure) await sql.query(ddl);
     spec._ensured = true;
+    await tidyIds(spec); // close any gaps left over from earlier edits
     return true;
   } catch {
     return false;
@@ -421,7 +422,8 @@ async function componentColumns(spec) {
   const [schema, table] = spec.backing.split('.');
   const cols = await sql.query(
     `SELECT column_name AS name, data_type AS "dataType",
-            (is_identity = 'YES' OR COALESCE(column_default, '') LIKE 'nextval(%') AS auto
+            (is_identity = 'YES' OR COALESCE(column_default, '') LIKE 'nextval(%') AS auto,
+            (column_default IS NOT NULL) AS "hasDefault"
      FROM information_schema.columns
      WHERE table_schema = $1 AND table_name = $2
      ORDER BY ordinal_position`,
@@ -429,6 +431,49 @@ async function componentColumns(spec) {
   );
   return cols.length ? cols : spec.columns;
 }
+
+// Keep the id column reading 1, 2, 3… Deleting a row — or an insert that
+// failed after the sequence had already handed out a number — leaves a hole,
+// which looks like a missing row in the grid. This renumbers the rows in their
+// existing id order and parks the sequence right after the last one. The usual
+// case (no hole) costs a single count.
+async function resequenceIds(spec) {
+  const idCol = (await componentColumns(spec)).find((c) => c.auto);
+  if (!idCol) return; // shipping has no id column at all
+  const id = `"${idCol.name.replaceAll('"', '')}"`;
+  const seq = `pg_get_serial_sequence('${spec.backing}', '${idCol.name}')`;
+  const [{ n, max }] = await sql.query(
+    `SELECT COUNT(*)::int AS n, COALESCE(MAX(${id}), 0)::int AS max FROM ${spec.backing}`
+  );
+  const park = `SELECT setval(${seq}, GREATEST(${n}, 1), ${n > 0})`;
+  if (n === max) {
+    await sql.query(park); // already contiguous — just make sure the next id follows on
+    return;
+  }
+  // Renumber through negative ids: a straight UPDATE can collide with a row
+  // that hasn't been renumbered yet, and the id is a primary key. One
+  // transaction, so the ids are never left negative.
+  await sql.transaction([
+    sql.query(`UPDATE ${spec.backing} SET ${id} = -${id} WHERE ${id} > 0`),
+    sql.query(
+      `WITH ordered AS (
+         SELECT ${id} AS old, row_number() OVER (ORDER BY ${id} DESC) AS rn
+         FROM ${spec.backing} WHERE ${id} < 0
+       )
+       UPDATE ${spec.backing} t SET ${id} = o.rn FROM ordered o WHERE t.${id} = o.old`
+    ),
+    sql.query(park),
+  ]);
+}
+
+// Tidying the ids is housekeeping — never let it fail the write that ran fine.
+const tidyIds = async (spec) => {
+  try {
+    await resequenceIds(spec);
+  } catch (err) {
+    console.warn(`Could not resequence ${spec.backing} ids:`, err.message);
+  }
+};
 
 app.get('/api/components/:key', requireAuth, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
@@ -465,7 +510,61 @@ app.post('/api/components/:key', requireAuth, wrap(async (req, res) => {
     throw new Error('Numeric fields must contain numbers.');
   }
   await sql.query(`INSERT INTO ${spec.backing} (${names}) VALUES (${placeholders})`, params);
+  await tidyIds(spec);
   res.json({ ok: true });
+}));
+
+// Bulk insert from an uploaded CSV. The client parses the file and maps its
+// header onto the live columns, so what arrives here is plain row objects
+// keyed by column name. The whole batch goes in as one INSERT: a bad cell
+// rejects the upload instead of leaving it half applied.
+const MAX_IMPORT_ROWS = 1000;
+
+app.post('/api/components/:key/import', requireAuth, wrap(async (req, res) => {
+  const spec = componentSpec(req.params.key);
+  if (!(await ensureComponentTable(spec))) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length) throw new Error('No rows to import.');
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new Error(`Too many rows — import at most ${MAX_IMPORT_ROWS} at a time.`);
+  }
+  const columns = await componentColumns(spec);
+  const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+  // Only columns the file actually fills get written; the rest keep their
+  // defaults rather than being overwritten with nulls.
+  const used = columns.filter((c) => !c.auto && rows.some((r) => !isBlank(r?.[c.name])));
+  if (!used.length) throw new Error('None of the CSV columns match this table.');
+
+  const params = [];
+  const tuples = rows.map((row, i) => {
+    const cells = used.map((c) => {
+      const raw = row?.[c.name];
+      // A blank cell in a column with a default takes the default (rec-del
+      // pairings' Pipeline/DUNS are NOT NULL with one); otherwise NULL.
+      if (isBlank(raw)) return c.hasDefault ? 'DEFAULT' : 'NULL';
+      if (/int|numeric|double|real/.test(c.dataType)) {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) {
+          throw new Error(`Row ${i + 1}: "${c.name}" must be a number — got "${raw}".`);
+        }
+        params.push(n);
+      } else {
+        params.push(String(raw).trim());
+      }
+      return `$${params.length}`;
+    });
+    return `(${cells.join(', ')})`;
+  });
+
+  const names = used.map((c) => `"${c.name.replaceAll('"', '')}"`).join(', ');
+  await sql.query(
+    `INSERT INTO ${spec.backing} (${names}) VALUES ${tuples.join(', ')}`,
+    params
+  );
+  await tidyIds(spec);
+  res.json({ ok: true, inserted: rows.length, columns: used.map((c) => c.name) });
 }));
 
 // Inline cell edits from the grid — update one row (found by ctid) in place.
@@ -504,6 +603,7 @@ app.delete('/api/components/:key', requireAuth, wrap(async (req, res) => {
   const ctid = String(req.body?.ctid || '');
   if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
   await sql.query(`DELETE FROM ${spec.backing} WHERE ctid = $1::tid`, [ctid]);
+  await tidyIds(spec);
   res.json({ ok: true });
 }));
 
