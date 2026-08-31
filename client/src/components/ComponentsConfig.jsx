@@ -60,7 +60,9 @@ function matchHeaders(header, columns) {
 const MAX_IMPORT_ROWS = 1000; // matches the server's per-upload cap
 const IMPORT_PREVIEW_ROWS = 3;
 
-function ComponentTable({ tableKey, viewerName, addLabel }) {
+// `hideColumns` only hides — the column stays in the table, in the CSV
+// template and in an upload; new rows just take its database default.
+function ComponentTable({ tableKey, viewerName, addLabel, hideColumns = [] }) {
   const [data, setData] = useState(null); // { columns, rows }
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -248,11 +250,12 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
 
   const columnDefs = useMemo(() => {
     if (!data) return [];
+    const shown = data.columns.filter((c) => !hideColumns.includes(c.name));
     // The input row announces itself in its first cell ("＋ Add … — type here")
-    const firstEditable = data.columns.find((col) => !col.auto)?.name;
+    const firstEditable = shown.find((col) => !col.auto)?.name;
     const addHint = `＋ ${addLabel.replace(/^\+\s*/, '')} — type here…`;
     return [
-      ...data.columns.map((c) => ({
+      ...shown.map((c) => ({
         field: c.name,
         headerName: c.name,
         sortable: true,
@@ -309,7 +312,7 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
           ),
       },
     ];
-  }, [data, addLabel, addFromDraft, removeRow]);
+  }, [data, addLabel, addFromDraft, removeRow, hideColumns.join(',')]);
 
   const draftFilled = editableCols.some(
     (c) => (draftRef.current[c.name] ?? '').toString().trim() !== ''
@@ -928,6 +931,7 @@ export default function ComponentsConfig() {
             tableKey="rec-del-pairings"
             viewerName="rec_del_pairings"
             addLabel="+ Add Pairing"
+            hideColumns={['DUNS']}
           />
         </Section>
       </div>
