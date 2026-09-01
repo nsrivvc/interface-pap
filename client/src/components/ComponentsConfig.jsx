@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
-import { api } from '../api';
+import { api, apiDownload } from '../api';
 import { parseCsv, toCsv, downloadCsv } from '../csv';
 import { gridTheme } from '../grid-theme';
 
@@ -57,6 +57,9 @@ function matchHeaders(header, columns) {
   });
 }
 
+// Reference tables have no Parquet export — the pipeline doesn't produce them.
+const DOWNLOAD_FORMATS = ['csv', 'xlsx'];
+
 const MAX_IMPORT_ROWS = 1000; // matches the server's per-upload cap
 const IMPORT_PREVIEW_ROWS = 3;
 
@@ -69,6 +72,7 @@ function ComponentTable({ tableKey, viewerName, addLabel, hideColumns = [] }) {
   // A parsed CSV waiting to be confirmed, plus the outcome of the last upload
   const [pending, setPending] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [downloading, setDownloading] = useState(null); // format while a download runs
   const [imported, setImported] = useState('');
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -201,6 +205,20 @@ function ComponentTable({ tableKey, viewerName, addLabel, hideColumns = [] }) {
       setError(err.message);
     } finally {
       setImporting(false);
+    }
+  };
+
+  // Every row of the backing table, straight from the same download route the
+  // Table Viewer uses (all rows, not just the page on screen).
+  const download = async (format) => {
+    setDownloading(format);
+    setError('');
+    try {
+      await apiDownload(`/api/tables/${viewerName}/download?format=${format}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -390,6 +408,24 @@ function ComponentTable({ tableKey, viewerName, addLabel, hideColumns = [] }) {
             >
               CSV template
             </button>
+            {viewerName && (
+              <div className="dl-group">
+                <span className="dl-label">Download</span>
+                {DOWNLOAD_FORMATS.map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    className="btn btn-outline dl-btn"
+                    disabled={downloading !== null}
+                    onClick={() => download(format)}
+                    title={`Download every row of this table as ${format.toUpperCase()}`}
+                  >
+                    {downloading === format ? <span className="spin">⟳</span> : '↓'}{' '}
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
             {viewerName && (
               <Link className="cc-viewer-link" to={`/tables/${viewerName}`}>
                 open in Table Viewer →
