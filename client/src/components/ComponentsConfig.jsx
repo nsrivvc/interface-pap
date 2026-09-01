@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
-import { api } from '../api';
+import { api, apiDownload } from '../api';
 import { gridTheme } from '../grid-theme';
 
 // ---- Configure Components ----
@@ -30,12 +30,14 @@ const numify = (col, v) =>
 
 const blank = (v) => v === undefined || v === null || v === '';
 
-function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
+// Reference tables have no Parquet export — the pipeline doesn't produce them.
+const DOWNLOAD_FORMATS = ['csv', 'xlsx'];
+
+function ComponentTable({ tableKey, viewerName, addLabel }) {
   const [data, setData] = useState(null); // { columns, rows }
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [showJson, setShowJson] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(null); // format while a download runs
 
   // The pinned input row. AG Grid writes committed cell values straight onto
   // this object; the tick just re-renders so the Add button enables/disables.
@@ -188,25 +190,17 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
     (c) => (draftRef.current[c.name] ?? '').toString().trim() !== ''
   );
 
-  // The rows as the pairing JSON — same keys, same order, numbers as numbers
-  const json = useMemo(() => {
-    if (!jsonPreview || !data) return '';
-    return JSON.stringify(
-      data.rows.map((r) =>
-        Object.fromEntries(editableCols.map((c) => [c.name, numify(c, r[c.name])]))
-      ),
-      null,
-      2
-    );
-  }, [jsonPreview, data, editableCols]);
-
-  const copyJson = async () => {
+  // Every row of the backing table, straight from the same download route the
+  // Table Viewer uses (all rows, not just the page on screen).
+  const download = async (format) => {
+    setDownloading(format);
+    setError('');
     try {
-      await navigator.clipboard.writeText(json);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard unavailable — the JSON is still selectable below
+      await apiDownload(`/api/tables/${viewerName}/download?format=${format}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloading(null);
     }
   };
 
@@ -254,14 +248,23 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
             >
               {saving ? '⟳ Adding…' : addLabel}
             </button>
-            {jsonPreview && (
-              <button
-                type="button"
-                className="btn btn-outline"
-                onClick={() => setShowJson((s) => !s)}
-              >
-                {showJson ? 'Hide JSON' : '{ } View JSON'}
-              </button>
+            {viewerName && (
+              <div className="dl-group">
+                <span className="dl-label">Download</span>
+                {DOWNLOAD_FORMATS.map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    className="btn btn-outline dl-btn"
+                    disabled={downloading !== null}
+                    onClick={() => download(format)}
+                    title={`Download every row of this table as ${format.toUpperCase()}`}
+                  >
+                    {downloading === format ? <span className="spin">⟳</span> : '↓'}{' '}
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             )}
             {viewerName && (
               <Link className="cc-viewer-link" to={`/tables/${viewerName}`}>
@@ -269,19 +272,6 @@ function ComponentTable({ tableKey, viewerName, addLabel, jsonPreview }) {
               </Link>
             )}
           </div>
-          {jsonPreview && showJson && (
-            <div className="cc-json">
-              <div className="cc-json-head">
-                <span>
-                  Exactly what the pairing config file looks like with these rows in it.
-                </span>
-                <button type="button" className="btn btn-outline dl-btn" onClick={copyJson}>
-                  {copied ? '✓ Copied' : '⧉ Copy JSON'}
-                </button>
-              </div>
-              <pre>{json}</pre>
-            </div>
-          )}
         </>
       )}
     </>
@@ -738,15 +728,13 @@ export default function ComponentsConfig() {
           hint="each row is one entry of the Stage 4 pairing JSON — Pipeline, DUNS, Order, Pattern, Regex"
         >
           <p className="wf-note">
-            The default patterns are seeded to match the pipeline&apos;s config file. Add a row
-            to append an entry; use <strong>View JSON</strong> to see (and copy) the exact
-            JSON the table currently represents.
+            The default patterns are seeded to match the pipeline&apos;s config file. Add a
+            row to append an entry.
           </p>
           <ComponentTable
             tableKey="rec-del-pairings"
             viewerName="rec_del_pairings"
             addLabel="+ Add Pairing"
-            jsonPreview
           />
         </Section>
       </div>

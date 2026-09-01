@@ -1893,33 +1893,6 @@ td.json-cell {
 .cc-viewer-link:hover {
   color: var(--orange);
 }
-.cc-json {
-  margin-top: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #1f2a44;
-  overflow: hidden;
-}
-.cc-json-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 14px;
-  background: #f7f8fb;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.78rem;
-  color: var(--slate);
-}
-.cc-json pre {
-  margin: 0;
-  padding: 14px 16px;
-  max-height: 340px;
-  overflow: auto;
-  color: #dfe6f3;
-  font-size: 0.78rem;
-  line-height: 1.5;
-}
 .cc-placeholder {
   margin: 0;
   font-size: 0.78rem;
