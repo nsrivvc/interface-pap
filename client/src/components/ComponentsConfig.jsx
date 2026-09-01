@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
 import { api, apiDownload } from '../api';
+import { parseCsv, toCsv, downloadCsv } from '../csv';
 import { gridTheme } from '../grid-theme';
 
 // ---- Configure Components ----
@@ -30,14 +31,51 @@ const numify = (col, v) =>
 
 const blank = (v) => v === undefined || v === null || v === '';
 
+// CSV headers are matched to columns loosely, so "Pipeline Type",
+// "pipeline_type" and "PipelineType" all land on the same column.
+const headerKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Match a file's header row onto the table's columns: exact matches first, then
+// a second pass for headers that are a shortening of exactly one column left
+// over ("ContractDate" → "ContractDateStructure"). Returns one entry per
+// header — the column it feeds, or null if nothing fits.
+function matchHeaders(header, columns) {
+  const byKey = new Map(columns.map((c) => [headerKey(c.name), c]));
+  const matched = header.map((h) => byKey.get(headerKey(h)) || null);
+  const spare = columns.filter((c) => !matched.includes(c));
+  return matched.map((col, i) => {
+    if (col) return col;
+    const k = headerKey(header[i]);
+    if (!k) return null;
+    const near = spare.filter((c) => {
+      const ck = headerKey(c.name);
+      return !matched.includes(c) && (ck.startsWith(k) || k.startsWith(ck));
+    });
+    if (near.length !== 1) return null;
+    matched[i] = near[0]; // claim it so a later header can't take it too
+    return near[0];
+  });
+}
+
 // Reference tables have no Parquet export — the pipeline doesn't produce them.
 const DOWNLOAD_FORMATS = ['csv', 'xlsx'];
 
-function ComponentTable({ tableKey, viewerName, addLabel }) {
+const MAX_IMPORT_ROWS = 1000; // matches the server's per-upload cap
+const IMPORT_PREVIEW_ROWS = 3;
+
+// `hideColumns` only hides — the column stays in the table, in the CSV
+// template and in an upload; new rows just take its database default.
+function ComponentTable({ tableKey, viewerName, addLabel, hideColumns = [] }) {
   const [data, setData] = useState(null); // { columns, rows }
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  // A parsed CSV waiting to be confirmed, plus the outcome of the last upload
+  const [pending, setPending] = useState(null);
+  const [importing, setImporting] = useState(false);
   const [downloading, setDownloading] = useState(null); // format while a download runs
+  const [imported, setImported] = useState('');
+  const fileRef = useRef(null);
+  const importRef = useRef(null);
 
   // The pinned input row. AG Grid writes committed cell values straight onto
   // this object; the tick just re-renders so the Add button enables/disables.
@@ -58,6 +96,12 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
   useEffect(load, [load]);
 
   const editableCols = useMemo(() => (data?.columns || []).filter((c) => !c.auto), [data]);
+
+  // A parsed file lands below a grid that can be taller than the window, so
+  // bring the confirm step to the user rather than the other way round.
+  useEffect(() => {
+    if (pending) importRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [pending]);
 
   // Commit the pinned input row as a new table row
   const addFromDraft = useCallback(async () => {
@@ -80,6 +124,107 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
       setSaving(false);
     }
   }, [tableKey, editableCols, saving, load]);
+
+  // ---- CSV upload ----
+  // The file is parsed and matched to the live columns here, so the row count,
+  // the columns that matched and the ones that didn't are all on screen before
+  // anything is written; confirming posts the rows for the server to insert as
+  // one batch.
+  const readCsvFile = useCallback(
+    async (file) => {
+      setError('');
+      setImported('');
+      try {
+        const table = parseCsv(await file.text());
+        if (table.length < 2) {
+          throw new Error(
+            'That CSV needs a header row naming the columns, plus at least one data row.'
+          );
+        }
+        const [header, ...body] = table;
+        const mapped = matchHeaders(header, editableCols);
+        const matched = mapped.filter(Boolean);
+        if (!matched.length) {
+          throw new Error(
+            `No header in that CSV matches this table. Expected: ${editableCols
+              .map((c) => c.name)
+              .join(', ')}.`
+          );
+        }
+        if (body.length > MAX_IMPORT_ROWS) {
+          throw new Error(
+            `That CSV has ${body.length} rows — upload at most ${MAX_IMPORT_ROWS} at a time.`
+          );
+        }
+        const rows = body
+          .map((cells) => {
+            const row = {};
+            mapped.forEach((c, i) => {
+              const v = (cells[i] ?? '').trim();
+              if (c && v !== '') row[c.name] = v;
+            });
+            return row;
+          })
+          .filter((r) => Object.keys(r).length);
+        if (!rows.length) throw new Error('Every data row in that CSV is empty.');
+        setPending({
+          name: file.name,
+          rows,
+          columns: matched.map((c) => c.name),
+          ignored: header.filter((h, i) => !mapped[i] && h.trim() !== ''),
+          loose: header
+            .map((h, i) => (mapped[i] && headerKey(h) !== headerKey(mapped[i].name)
+              ? `${h.trim()} → ${mapped[i].name}`
+              : null))
+            .filter(Boolean),
+          missing: editableCols.filter((c) => !matched.includes(c)).map((c) => c.name),
+        });
+      } catch (err) {
+        setPending(null);
+        setError(err.message);
+      }
+    },
+    [editableCols]
+  );
+
+  const runImport = async () => {
+    if (!pending || importing) return;
+    setImporting(true);
+    setError('');
+    try {
+      const res = await api(`/api/components/${tableKey}/import`, {
+        method: 'POST',
+        body: { rows: pending.rows },
+      });
+      setImported(
+        `Added ${res.inserted} row${res.inserted === 1 ? '' : 's'} from ${pending.name}.`
+      );
+      setPending(null);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Every row of the backing table, straight from the same download route the
+  // Table Viewer uses (all rows, not just the page on screen).
+  const download = async (format) => {
+    setDownloading(format);
+    setError('');
+    try {
+      await apiDownload(`/api/tables/${viewerName}/download?format=${format}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDownloading(null);
+    }
+  };
+
+  // An empty CSV carrying exactly this table's headers — fill it in, upload it back
+  const downloadTemplate = () =>
+    downloadCsv(`${tableKey}-template.csv`, toCsv([editableCols.map((c) => c.name)]));
 
   const removeRow = useCallback(
     async (row) => {
@@ -123,11 +268,12 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
 
   const columnDefs = useMemo(() => {
     if (!data) return [];
+    const shown = data.columns.filter((c) => !hideColumns.includes(c.name));
     // The input row announces itself in its first cell ("＋ Add … — type here")
-    const firstEditable = data.columns.find((col) => !col.auto)?.name;
+    const firstEditable = shown.find((col) => !col.auto)?.name;
     const addHint = `＋ ${addLabel.replace(/^\+\s*/, '')} — type here…`;
     return [
-      ...data.columns.map((c) => ({
+      ...shown.map((c) => ({
         field: c.name,
         headerName: c.name,
         sortable: true,
@@ -184,25 +330,11 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
           ),
       },
     ];
-  }, [data, addLabel, addFromDraft, removeRow]);
+  }, [data, addLabel, addFromDraft, removeRow, hideColumns.join(',')]);
 
   const draftFilled = editableCols.some(
     (c) => (draftRef.current[c.name] ?? '').toString().trim() !== ''
   );
-
-  // Every row of the backing table, straight from the same download route the
-  // Table Viewer uses (all rows, not just the page on screen).
-  const download = async (format) => {
-    setDownloading(format);
-    setError('');
-    try {
-      await apiDownload(`/api/tables/${viewerName}/download?format=${format}`);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setDownloading(null);
-    }
-  };
 
   if (!data && !error) {
     return <p className="muted cc-loading">Loading table…</p>;
@@ -248,6 +380,34 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
             >
               {saving ? '⟳ Adding…' : addLabel}
             </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="cc-file-input"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = ''; // picking the same file twice should re-parse it
+                if (file) readCsvFile(file);
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-outline"
+              disabled={importing}
+              onClick={() => fileRef.current?.click()}
+              title="Add many rows at once from a CSV whose header row names these columns"
+            >
+              ⬆ Upload CSV
+            </button>
+            <button
+              type="button"
+              className="cc-template-link"
+              onClick={downloadTemplate}
+              title="Download an empty CSV with this table's column headers"
+            >
+              CSV template
+            </button>
             {viewerName && (
               <div className="dl-group">
                 <span className="dl-label">Download</span>
@@ -272,6 +432,76 @@ function ComponentTable({ tableKey, viewerName, addLabel }) {
               </Link>
             )}
           </div>
+          {imported && <div className="status-line ok">{imported}</div>}
+          {pending && (
+            <div className="cc-import" ref={importRef}>
+              <div className="cc-import-head">
+                <strong>{pending.name}</strong>
+                <span>
+                  {pending.rows.length} row{pending.rows.length === 1 ? '' : 's'} ready —{' '}
+                  {pending.columns.length} of {editableCols.length} columns matched
+                </span>
+              </div>
+              {pending.loose.length > 0 && (
+                <p className="cc-import-note">Matched by name: {pending.loose.join(', ')}</p>
+              )}
+              {pending.ignored.length > 0 && (
+                <p className="cc-import-note">
+                  Ignored (not a column here): {pending.ignored.join(', ')}
+                </p>
+              )}
+              {pending.missing.length > 0 && (
+                <p className="cc-import-note">
+                  Not in the file, left empty: {pending.missing.join(', ')}
+                </p>
+              )}
+              <div className="cc-import-preview">
+                <table>
+                  <thead>
+                    <tr>
+                      {pending.columns.map((c) => (
+                        <th key={c}>{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pending.rows.slice(0, IMPORT_PREVIEW_ROWS).map((r, i) => (
+                      <tr key={i}>
+                        {pending.columns.map((c) => (
+                          <td key={c}>{r[c] ?? ''}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="cc-import-actions">
+                <button
+                  type="button"
+                  className="btn btn-navy"
+                  disabled={importing}
+                  onClick={runImport}
+                >
+                  {importing
+                    ? '⟳ Adding…'
+                    : `Add ${pending.rows.length} row${pending.rows.length === 1 ? '' : 's'}`}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={importing}
+                  onClick={() => setPending(null)}
+                >
+                  Cancel
+                </button>
+                {pending.rows.length > IMPORT_PREVIEW_ROWS && (
+                  <span className="cc-import-note">
+                    showing the first {IMPORT_PREVIEW_ROWS} of {pending.rows.length} rows
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
     </>
@@ -690,7 +920,9 @@ export default function ComponentsConfig() {
           <p className="wf-note">
             Type into the striped input row at the bottom of the grid — right above its Add
             button — and hit ＋ to add the row. Click any existing cell to edit it in place;
-            press Enter (or click away) and the change saves straight to the warehouse table.
+            press Enter (or click away) and the change saves straight to the warehouse table. To
+            load many rows at once, grab the CSV template, fill it in and upload it — every
+            section takes one.
           </p>
           <ComponentTable
             tableKey="pipeline-attributes"
@@ -728,13 +960,14 @@ export default function ComponentsConfig() {
           hint="each row is one entry of the Stage 4 pairing JSON — Pipeline, DUNS, Order, Pattern, Regex"
         >
           <p className="wf-note">
-            The default patterns are seeded to match the pipeline&apos;s config file. Add a
-            row to append an entry.
+            The default patterns are seeded to match the pipeline&apos;s config file. Add a row
+            to append an entry.
           </p>
           <ComponentTable
             tableKey="rec-del-pairings"
             viewerName="rec_del_pairings"
             addLabel="+ Add Pairing"
+            hideColumns={['DUNS']}
           />
         </Section>
       </div>

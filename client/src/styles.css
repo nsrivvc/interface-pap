@@ -398,10 +398,43 @@ button {
   flex-direction: column;
   gap: 8px;
 }
-.scenario-field-group > label {
+/* Label sits on a row with the field's "Add all" control, so it is no longer a
+   direct child — match it as a descendant. */
+.scenario-field-group label {
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--slate);
+}
+.scenario-field-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* Bulk select/clear for a multi-value field. A quiet text button: it is a
+   convenience beside the label, not a primary action competing with Save. */
+.scenario-select-all {
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scenario-select-all:hover {
+  border-color: var(--orange);
+  background: #fdf0e5;
+}
+/* "2 filled in from the selected pipeline" — sits under the Shipper label when
+   the pipeline mapping has pre-filled rows, so an auto-filled pick is never
+   mistaken for one the user made. */
+.scenario-auto-note {
+  margin-top: -4px;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--orange);
 }
 .scenario-row-value {
   flex: 1;
@@ -883,6 +916,8 @@ button {
 }
 
 /* ---- Live GitHub Actions run status on a workflow card ---- */
+/* Kept for any standalone use; inside .run-detail the section supplies the
+   frame, so these carry no border or background of their own. */
 .gh-runs {
   margin-top: 14px;
   border: 1px solid var(--border);
@@ -895,6 +930,24 @@ button {
   font-weight: 700;
   color: var(--navy);
   margin-bottom: 6px;
+}
+/* What shipper scope the run was dispatched with (from its scenario). */
+.gh-scope-line {
+  font-size: 0.78rem;
+  color: var(--slate);
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border-radius: 6px;
+  background: rgba(31, 42, 68, 0.04);
+}
+.gh-scope-line.scoped {
+  color: var(--navy);
+  background: #fdf0e5;
+}
+.gh-scope-warn {
+  margin-top: 4px;
+  color: #8a4b1f;
+  line-height: 1.45;
 }
 .gh-run-line {
   display: flex;
@@ -927,31 +980,6 @@ button {
   text-decoration: underline;
 }
 
-.wf-complete {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: #e2f3ea;
-  color: var(--success);
-  font-size: 0.85rem;
-  font-weight: 600;
-  animation: complete-in 0.45s ease;
-}
-.wf-complete-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--success);
-  color: #fff;
-  font-size: 0.8rem;
-  animation: tick-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
 @keyframes complete-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -1893,6 +1921,79 @@ td.json-cell {
 .cc-viewer-link:hover {
   color: var(--orange);
 }
+/* CSV upload — the hidden picker, its link-styled template button and the
+   confirm panel that previews a parsed file before it is inserted */
+.cc-file-input {
+  display: none;
+}
+.cc-template-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 0.78rem;
+  color: var(--navy);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cc-template-link:hover {
+  color: var(--orange);
+}
+.cc-import {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f7f8fb;
+  padding: 12px 14px;
+}
+.cc-import-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+.cc-import-head span {
+  color: var(--slate);
+  font-size: 0.78rem;
+}
+.cc-import-note {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--slate);
+}
+.cc-import-preview {
+  margin-top: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+.cc-import-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.75rem;
+}
+.cc-import-preview th,
+.cc-import-preview td {
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+.cc-import-preview th {
+  color: var(--slate);
+  font-weight: 600;
+}
+.cc-import-preview tr:last-child td {
+  border-bottom: none;
+}
+.cc-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
 .cc-placeholder {
   margin: 0;
   font-size: 0.78rem;
@@ -1936,4 +2037,323 @@ td.json-cell {
 .cc-add-inline:hover {
   background: var(--orange);
   color: #fff;
+}
+
+/* ---- Write semantics on a workflow card ----
+   What a run DID to each table, not just that it finished. The colours carry
+   the meaning, so they are deliberate: PRESERVED is green because the table
+   was left intact, REBUILT is amber because the rows were replaced — amber and
+   not red, since a rebuild is the designed behaviour of every Silver table and
+   must not read as a failure. Red stays reserved for jobs that actually broke. */
+/* ONE panel for the run: where it ran, then what it wrote. The two used to be
+   separate bordered boxes, which read as unrelated reports — the write
+   semantics are detail ON those runs, so they share a container and are
+   separated by a rule rather than a gap. */
+.run-detail {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+.run-detail-sec {
+  padding: 12px 14px;
+}
+.run-detail-sec + .run-detail-sec {
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+.run-detail-head {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-bottom: 8px;
+}
+.write-row {
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+}
+.write-row:first-of-type {
+  border-top: none;
+}
+.write-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.write-step-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--navy);
+}
+.write-rows {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--slate);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.write-note {
+  font-size: 0.72rem;
+  color: var(--slate);
+  font-style: italic;
+}
+/* "· 3 tables" beside a step that wrote more than one table */
+.write-rows-sub {
+  font-weight: 500;
+  opacity: 0.75;
+}
+.write-copy {
+  font-size: 0.78rem;
+  color: var(--slate);
+  margin-top: 3px;
+  /* Clears the badge so the sentence lines up under the step label */
+  padding-left: 96px;
+}
+.write-error {
+  color: var(--danger);
+}
+.write-row.failed .write-step-label {
+  color: var(--danger);
+}
+.write-row.running .write-step-label {
+  color: var(--orange);
+}
+
+/* The four write-mode badges */
+.write-badge {
+  display: inline-block;
+  flex: none;
+  width: 86px;
+  text-align: center;
+  padding: 3px 0;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: help;
+}
+/* Rows added to a raw archive — informational blue, nothing is at risk */
+.write-badge.appended {
+  background: #e7ecf6;
+  color: var(--navy);
+}
+/* Untouched and safe — the only table that survives a run */
+.write-badge.preserved {
+  background: #e2f3ea;
+  color: var(--success);
+  box-shadow: inset 0 0 0 1px rgba(29, 122, 76, 0.25);
+}
+/* Replaced, not broken */
+.write-badge.rebuilt {
+  background: #fdf0e5;
+  color: var(--orange);
+}
+/* A deliberate no-op */
+.write-badge.skipped {
+  background: #eef1f6;
+  color: var(--slate);
+}
+
+/* The standing caveat: ids on rebuilt tables are not stable across runs. */
+.write-caveat {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(31, 42, 68, 0.04);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--slate);
+}
+.write-caveat-icon {
+  flex: none;
+  font-size: 0.85rem;
+  color: var(--navy);
+}
+
+/* Run outcome: that every stage finished AND whether anything changed, as one
+   block. A no-op run is neither a failure nor a success worth celebrating, so
+   the verdict half stays neutral slate on an otherwise green banner. */
+.wf-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #e2f3ea;
+  color: var(--success);
+  font-size: 0.85rem;
+  animation: complete-in 0.45s ease;
+}
+.wf-outcome-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.wf-outcome-head {
+  font-weight: 600;
+}
+.wf-outcome-verdict {
+  font-size: 0.82rem;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--navy);
+  padding-top: 5px;
+  border-top: 1px solid rgba(31, 42, 68, 0.12);
+}
+.wf-outcome.noop {
+  background: #eef1f6;
+  color: var(--navy);
+}
+.wf-outcome-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+  font-size: 0.8rem;
+  animation: tick-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.badge.write-verdict-badge {
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: help;
+}
+.badge.write-verdict-badge.noop {
+  background: #eef1f6;
+  color: var(--slate);
+}
+.badge.write-verdict-badge.changed {
+  background: #e2f3ea;
+  color: var(--success);
+}
+
+/* ---- Pipeline onboarding gate: contracts held back on a run ----
+   Amber, not red: the run itself is fine and every registered pipeline
+   processed normally. What needs attention is one TSP that isn't onboarded,
+   which is a data-setup task, not a broken pipeline. */
+.gate-reject {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f0d9c2;
+  border-left: 4px solid var(--orange);
+  border-radius: 8px;
+  background: #fdf6ef;
+}
+.gate-reject-head {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--orange-dark);
+  margin-bottom: 7px;
+}
+.gate-reject-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 0.79rem;
+  color: var(--navy);
+}
+.gate-reject-name {
+  font-weight: 600;
+}
+.gate-reject-duns {
+  font-variant-numeric: tabular-nums;
+  color: var(--slate);
+  font-size: 0.75rem;
+}
+.gate-reject-rows {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--orange-dark);
+  white-space: nowrap;
+}
+.gate-reject-fix {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid #f0d9c2;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--slate);
+}
+
+/* ---- Scenario: fill every reference field at once ----
+   The per-field pills stay for "all shippers but one pipeline"; this is the
+   coarse version that pins the whole reference set in one click. */
+.scenario-bulk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 4px 0 14px;
+}
+.scenario-bulk-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--orange);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.scenario-bulk-btn:hover {
+  background: var(--orange);
+  color: #fff;
+}
+.scenario-bulk-note {
+  font-size: 0.74rem;
+  color: var(--slate);
+}
+
+/* One row per daily trigger time; the timezone is shared across them all. */
+.wf-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+/* Edit affordance on a saved scenario, and the banner while one is loaded. */
+.scenario-edit-btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-family: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.scenario-edit-btn:hover {
+  border-color: var(--orange);
+  background: #fdf0e5;
+}
+.scenario-editing-note {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--orange);
+  border-radius: 6px;
+  background: #fdf0e5;
+  color: var(--navy);
+  font-size: 0.78rem;
+}
+.gate-reject-copies {
+  font-weight: 500;
+  color: var(--slate);
+  font-size: 0.72rem;
 }

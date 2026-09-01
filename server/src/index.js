@@ -14,6 +14,7 @@ import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
 import { triggerPipeline, triggerIngest, pipelineRunStatus, cancelPipelineRuns } from './github.js';
+import { applyScenarioScope, applyScenarioPipelines } from './scope.js';
 import { powerbiAadToken, powerbiConfigured, goldReportEmbed } from './powerbi.js';
 import { provider, FEED_KEYS, feedSummaries } from './providers/index.js';
 
@@ -408,6 +409,7 @@ async function ensureComponentTable(spec) {
   try {
     for (const ddl of spec.ensure) await sql.query(ddl);
     spec._ensured = true;
+    await tidyIds(spec); // close any gaps left over from earlier edits
     return true;
   } catch {
     return false;
@@ -420,7 +422,8 @@ async function componentColumns(spec) {
   const [schema, table] = spec.backing.split('.');
   const cols = await sql.query(
     `SELECT column_name AS name, data_type AS "dataType",
-            (is_identity = 'YES' OR COALESCE(column_default, '') LIKE 'nextval(%') AS auto
+            (is_identity = 'YES' OR COALESCE(column_default, '') LIKE 'nextval(%') AS auto,
+            (column_default IS NOT NULL) AS "hasDefault"
      FROM information_schema.columns
      WHERE table_schema = $1 AND table_name = $2
      ORDER BY ordinal_position`,
@@ -428,6 +431,49 @@ async function componentColumns(spec) {
   );
   return cols.length ? cols : spec.columns;
 }
+
+// Keep the id column reading 1, 2, 3… Deleting a row — or an insert that
+// failed after the sequence had already handed out a number — leaves a hole,
+// which looks like a missing row in the grid. This renumbers the rows in their
+// existing id order and parks the sequence right after the last one. The usual
+// case (no hole) costs a single count.
+async function resequenceIds(spec) {
+  const idCol = (await componentColumns(spec)).find((c) => c.auto);
+  if (!idCol) return; // shipping has no id column at all
+  const id = `"${idCol.name.replaceAll('"', '')}"`;
+  const seq = `pg_get_serial_sequence('${spec.backing}', '${idCol.name}')`;
+  const [{ n, max }] = await sql.query(
+    `SELECT COUNT(*)::int AS n, COALESCE(MAX(${id}), 0)::int AS max FROM ${spec.backing}`
+  );
+  const park = `SELECT setval(${seq}, GREATEST(${n}, 1), ${n > 0})`;
+  if (n === max) {
+    await sql.query(park); // already contiguous — just make sure the next id follows on
+    return;
+  }
+  // Renumber through negative ids: a straight UPDATE can collide with a row
+  // that hasn't been renumbered yet, and the id is a primary key. One
+  // transaction, so the ids are never left negative.
+  await sql.transaction([
+    sql.query(`UPDATE ${spec.backing} SET ${id} = -${id} WHERE ${id} > 0`),
+    sql.query(
+      `WITH ordered AS (
+         SELECT ${id} AS old, row_number() OVER (ORDER BY ${id} DESC) AS rn
+         FROM ${spec.backing} WHERE ${id} < 0
+       )
+       UPDATE ${spec.backing} t SET ${id} = o.rn FROM ordered o WHERE t.${id} = o.old`
+    ),
+    sql.query(park),
+  ]);
+}
+
+// Tidying the ids is housekeeping — never let it fail the write that ran fine.
+const tidyIds = async (spec) => {
+  try {
+    await resequenceIds(spec);
+  } catch (err) {
+    console.warn(`Could not resequence ${spec.backing} ids:`, err.message);
+  }
+};
 
 app.get('/api/components/:key', requireAuth, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
@@ -464,7 +510,61 @@ app.post('/api/components/:key', requireAuth, wrap(async (req, res) => {
     throw new Error('Numeric fields must contain numbers.');
   }
   await sql.query(`INSERT INTO ${spec.backing} (${names}) VALUES (${placeholders})`, params);
+  await tidyIds(spec);
   res.json({ ok: true });
+}));
+
+// Bulk insert from an uploaded CSV. The client parses the file and maps its
+// header onto the live columns, so what arrives here is plain row objects
+// keyed by column name. The whole batch goes in as one INSERT: a bad cell
+// rejects the upload instead of leaving it half applied.
+const MAX_IMPORT_ROWS = 1000;
+
+app.post('/api/components/:key/import', requireAuth, wrap(async (req, res) => {
+  const spec = componentSpec(req.params.key);
+  if (!(await ensureComponentTable(spec))) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+  if (!rows.length) throw new Error('No rows to import.');
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new Error(`Too many rows — import at most ${MAX_IMPORT_ROWS} at a time.`);
+  }
+  const columns = await componentColumns(spec);
+  const isBlank = (v) => v === undefined || v === null || String(v).trim() === '';
+  // Only columns the file actually fills get written; the rest keep their
+  // defaults rather than being overwritten with nulls.
+  const used = columns.filter((c) => !c.auto && rows.some((r) => !isBlank(r?.[c.name])));
+  if (!used.length) throw new Error('None of the CSV columns match this table.');
+
+  const params = [];
+  const tuples = rows.map((row, i) => {
+    const cells = used.map((c) => {
+      const raw = row?.[c.name];
+      // A blank cell in a column with a default takes the default (rec-del
+      // pairings' Pipeline/DUNS are NOT NULL with one); otherwise NULL.
+      if (isBlank(raw)) return c.hasDefault ? 'DEFAULT' : 'NULL';
+      if (/int|numeric|double|real/.test(c.dataType)) {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) {
+          throw new Error(`Row ${i + 1}: "${c.name}" must be a number — got "${raw}".`);
+        }
+        params.push(n);
+      } else {
+        params.push(String(raw).trim());
+      }
+      return `$${params.length}`;
+    });
+    return `(${cells.join(', ')})`;
+  });
+
+  const names = used.map((c) => `"${c.name.replaceAll('"', '')}"`).join(', ');
+  await sql.query(
+    `INSERT INTO ${spec.backing} (${names}) VALUES ${tuples.join(', ')}`,
+    params
+  );
+  await tidyIds(spec);
+  res.json({ ok: true, inserted: rows.length, columns: used.map((c) => c.name) });
 }));
 
 // Inline cell edits from the grid — update one row (found by ctid) in place.
@@ -503,6 +603,7 @@ app.delete('/api/components/:key', requireAuth, wrap(async (req, res) => {
   const ctid = String(req.body?.ctid || '');
   if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
   await sql.query(`DELETE FROM ${spec.backing} WHERE ctid = $1::tid`, [ctid]);
+  await tidyIds(spec);
   res.json({ ok: true });
 }));
 
@@ -767,6 +868,89 @@ app.get('/api/scenarios', requireAuth, wrap(async (req, res) => {
 
 // Dropdown choices for a scenario, one list per reference data point,
 // compiled from the live reference tables (and the source option list).
+// Which Bronze columns carry the pipeline (TSP) and the shipper (K-holder) on
+// each feed, so a scenario can map one to the other. Mirrors PIPELINE_KEYS and
+// ShipperMapping.keys in the pipeline repo: a feed absent here simply
+// contributes no mapping, which is why Awards and IOC (no TSP identity on the
+// record) are not listed.
+const FEED_TSP_SHIPPER_COLUMNS = {
+  'bronze.gtran_firm': {
+    duns: 'tspduns', tspname: 'tspname', shipper: 'kholder', shippername: 'kholdername',
+  },
+  'bronze.gtran_it': {
+    duns: 'tspduns', tspname: 'tspname', shipper: 'kholder', shippername: 'kholdername',
+  },
+};
+
+/**
+ * pipeline DUNS -> the shipper option labels that appear on its contracts.
+ *
+ * The relationship is not reference data anybody maintains — it exists only on
+ * the contracts themselves (tspduns alongside kholder). Reading it live off
+ * Bronze was too fragile: Bronze is wiped and reloaded routinely, and a
+ * scenario is a PLANNING artifact that has to work BEFORE a load, so a mapping
+ * that vanishes with the contracts is useless exactly when it is needed.
+ *
+ * So it is LEARNED and KEPT. Every time the panel loads, whatever pairs Bronze
+ * currently holds are folded into public.pipeline_shipper_map; the map is then
+ * what answers the question. Once a pipeline's contracts have been seen even
+ * once, picking it fills in its shippers forever, wipe or no wipe.
+ *
+ * Labels still come from public.shipping, matching the `shipper` options
+ * EXACTLY, because the client selects dropdown values with them — a remembered
+ * K-holder with no row in the shipping table is left out rather than offered as
+ * something the dropdown cannot represent.
+ */
+const ENSURE_SHIPPER_MAP = `
+  CREATE TABLE IF NOT EXISTS public.pipeline_shipper_map (
+    tspduns     text NOT NULL,
+    tspname     text,
+    kholder     text NOT NULL,
+    kholdername text,
+    seen_ts     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tspduns, kholder)
+  )`;
+
+async function pipelineShipperMap() {
+  await sql.query(ENSURE_SHIPPER_MAP);
+
+  // Learn from whatever is loaded right now. Empty feeds contribute nothing
+  // and, crucially, remove nothing — this only ever adds.
+  for (const [table, cols] of Object.entries(FEED_TSP_SHIPPER_COLUMNS)) {
+    try {
+      await sql.query(
+        `INSERT INTO public.pipeline_shipper_map (tspduns, tspname, kholder, kholdername)
+         SELECT DISTINCT btrim(b.${cols.duns}), b.${cols.tspname},
+                btrim(b.${cols.shipper}), b.${cols.shippername}
+         FROM ${table} b
+         WHERE btrim(coalesce(b.${cols.duns}, '')) <> ''
+           AND btrim(coalesce(b.${cols.shipper}, '')) <> ''
+         ON CONFLICT (tspduns, kholder) DO UPDATE
+           SET tspname = EXCLUDED.tspname,
+               kholdername = EXCLUDED.kholdername,
+               seen_ts = now()`
+      );
+    } catch {
+      // Feed table absent — contributes no pairs.
+    }
+  }
+
+  const rows = await sql.query(
+    `SELECT m.tspduns AS duns, s."KHolderName" AS name, s."KHolderNo" AS no
+     FROM public.pipeline_shipper_map m
+     JOIN public.shipping s ON btrim(s."KHolderNo") = btrim(m.kholder)`
+  );
+  const map = {};
+  for (const r of rows) {
+    const label = r.no ? `${r.name} (${r.no})` : r.name;
+    if (!label) continue;
+    (map[r.duns] ||= []);
+    if (!map[r.duns].includes(label)) map[r.duns].push(label);
+  }
+  for (const duns of Object.keys(map)) map[duns].sort();
+  return map;
+}
+
 app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
   const grab = async (key, query, toLabel) => {
     try {
@@ -804,32 +988,35 @@ app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
         (r) => `${r.ord != null ? `${r.ord}. ` : ''}${r.pat || ''}${r.p ? ` (${r.p})` : ''}`.trim()
       ),
     },
+    // Pipeline DUNS -> its contracts' shipper labels, so picking a pipeline in
+    // a scenario can fill in the shippers that actually trade on it.
+    pipelineShippers: await pipelineShipperMap().catch(() => ({})),
   });
 }));
+
+// Keep only the known reference points; each holds one or more values (a lone
+// string is accepted and folded into a one-element array). Shared by create and
+// update so the two can never validate a scenario differently.
+function normalizeScenarioConfig(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const config = {};
+  for (const f of SCENARIO_FIELDS) {
+    const arr = Array.isArray(raw[f]) ? raw[f] : typeof raw[f] === 'string' ? [raw[f]] : [];
+    const vals = [
+      ...new Set(
+        arr.filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim().slice(0, 300))
+      ),
+    ].slice(0, 50);
+    if (vals.length) config[f] = vals;
+  }
+  return Object.keys(config).length ? config : null;
+}
 
 app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const description = String(req.body?.description || '').trim();
   if (!name) throw new Error('Scenario name is required.');
-  // Keep only the known reference points; each holds one or more values
-  // (a lone string is accepted and folded into a one-element array)
-  const raw = req.body?.config;
-  let config = null;
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    config = {};
-    for (const f of SCENARIO_FIELDS) {
-      const arr = Array.isArray(raw[f]) ? raw[f] : typeof raw[f] === 'string' ? [raw[f]] : [];
-      const vals = [
-        ...new Set(
-          arr
-            .filter((v) => typeof v === 'string' && v.trim())
-            .map((v) => v.trim().slice(0, 300))
-        ),
-      ].slice(0, 50);
-      if (vals.length) config[f] = vals;
-    }
-    if (!Object.keys(config).length) config = null;
-  }
+  const config = normalizeScenarioConfig(req.body?.config);
   if (!(await ensureScenarios())) {
     throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
   }
@@ -837,6 +1024,33 @@ app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
     INSERT INTO scenarios (name, description, config)
     VALUES (${name}, ${description || null}, ${config ? JSON.stringify(config) : null}::jsonb)
     RETURNING *`;
+  res.json({ scenario });
+}));
+
+// Edit a scenario IN PLACE. Keeping the id is the whole point: workflows
+// reference a scenario by id, so editing must not orphan them the way
+// delete-then-recreate would (a new row gets a new id, and the workflow's
+// dispatch then fails with "the attached scenario no longer exists").
+app.put('/api/scenarios/:id', requireAuth, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new Error('Bad scenario id.');
+  const name = String(req.body?.name || '').trim();
+  if (!name) throw new Error('Scenario name is required.');
+  const description = String(req.body?.description || '').trim();
+  const config = normalizeScenarioConfig(req.body?.config);
+  if (!(await ensureScenarios())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const [scenario] = await sql`
+    UPDATE scenarios
+    SET name = ${name},
+        description = ${description || null},
+        config = ${config ? JSON.stringify(config) : null}::jsonb
+    WHERE id = ${id}
+    RETURNING *`;
+  if (!scenario) {
+    throw new Error(`Scenario ${id} no longer exists — it may have been deleted in another tab.`);
+  }
   res.json({ scenario });
 }));
 
@@ -970,8 +1184,17 @@ app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
 
 // Dispatch each selected source's end-to-end pipeline workflow (stages 1-5
 // in one run per feed) on the STAGE_3_4_5 repo. Route path kept for the client.
+// The workflow's attached scenario is applied FIRST, as the pipeline's shipper
+// scope (bronze.shipper_mapping), so the dispatched stage-3 runs read it —
+// no scenario clears the scope, keeping every run reproducible from its
+// scenario alone.
 app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => {
-  res.json(await triggerPipeline(req.body?.sources));
+  const scope = await applyScenarioScope(req.body?.scenarioId);
+  // The scenario's Pipeline picks become the run's ONBOARDING REGISTER: a
+  // contract whose TSP is not in it is held back at deduplication(p1) and
+  // reported, while registered pipelines in the same load process normally.
+  const pipelines = await applyScenarioPipelines(req.body?.scenarioId);
+  res.json({ ...(await triggerPipeline(req.body?.sources)), scope, pipelines });
 }));
 
 // Dispatch one source's ingest-only (stage 1-2) workflow — Manual Workflow panel
@@ -981,9 +1204,16 @@ app.post('/api/pipeline/trigger-ingest', requireAuth, wrap(async (req, res) => {
 
 // Live status of a dispatch (?files=a.yml,b.yml&since=ISO): one run per file,
 // with its jobs — stages 3-5 are jobs inside each feed's run now.
+//
+// Add &writes=1 to also read each job's log for the run's WRITE SEMANTICS —
+// which tables were appended to, preserved, rebuilt or skipped, and how many
+// rows each moved. That is the part a bare "completed" hides: rerunning a
+// workflow rebuilds every downstream table whether or not anything new came
+// in, and only the amendments ledger carries state between runs.
 app.get('/api/pipeline/run-status', requireAuth, wrap(async (req, res) => {
   const files = String(req.query.files || '').split(',').filter(Boolean);
-  res.json(await pipelineRunStatus(files, req.query.since));
+  const withWrites = req.query.writes === '1';
+  res.json(await pipelineRunStatus(files, req.query.since, { withWrites }));
 }));
 
 // Cancel the in-flight GitHub Actions runs of a dispatch ({ files, since })

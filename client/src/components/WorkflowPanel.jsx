@@ -18,6 +18,14 @@ import {
   saveWorkflows,
 } from '../workflow-defs';
 import { FEED_WORKFLOW_FILES } from '../providers/index.js';
+import {
+  WRITE_MODE_INFO,
+  WRITE_STEPS,
+  writeStepCopy,
+  partialSkipNote,
+  runWriteVerdict,
+  REBUILD_ID_WARNING,
+} from '../write-modes.js';
 
 const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -93,15 +101,80 @@ function dateKeyIn(tz) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: tz, dateStyle: 'short' }).format(new Date());
 }
 
-/** Human countdown until the next daily occurrence of "HH:MM" in the given timezone. */
-function nextRunIn(time, tz) {
-  const [th, tm] = time.split(':').map(Number);
+/**
+ * Human countdown to the SOONEST of a workflow's daily trigger times, in that
+ * workflow's own timezone. Times wrap: 23:50 seen at 00:10 is 23h 40m away,
+ * not negative, so the earliest upcoming one wins on a plain modulo.
+ */
+function nextRunIn(times, tz) {
   const [nh, nm] = currentTimeIn(tz).split(':').map(Number);
-  const diff = (th * 60 + tm - (nh * 60 + nm) + 1440) % 1440;
-  if (diff === 0) return 'now';
-  const h = Math.floor(diff / 60);
-  const m = diff % 60;
+  const now = nh * 60 + nm;
+  let soonest = null;
+  for (const time of times || []) {
+    if (!time) continue;
+    const [th, tm] = time.split(':').map(Number);
+    const diff = (th * 60 + tm - now + 1440) % 1440;
+    if (soonest === null || diff < soonest) soonest = diff;
+  }
+  if (soonest === null) return '';
+  if (soonest === 0) return 'now';
+  const h = Math.floor(soonest / 60);
+  const m = soonest % 60;
   return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+}
+
+/** The times a workflow fires at, newest shape or old single-`time` saves. */
+const scheduleTimes = (schedule) =>
+  schedule?.times || (schedule?.time ? [schedule.time] : []);
+
+/**
+ * The trigger-time editor: any number of daily times, one shared timezone.
+ * Used by both the create and the edit form so they cannot drift apart.
+ */
+function TriggerTimes({ times, tz, setTimes, setTz }) {
+  const rows = times.length ? times : [''];
+  const update = (i, v) => setTimes(rows.map((t, idx) => (idx === i ? v : t)));
+  const remove = (i) => setTimes(rows.filter((_, idx) => idx !== i).filter(Boolean));
+  return (
+    <>
+      {rows.map((t, i) => (
+        <div key={i} className="wf-time-row">
+          <input type="time" value={t} onChange={(e) => update(i, e.target.value)} />
+          {(rows.length > 1 || t) && (
+            <button
+              type="button"
+              className="cc-remove"
+              title="Remove this trigger time"
+              onClick={() => remove(i)}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      ))}
+      <div className="wf-schedule-row" style={{ marginTop: 8 }}>
+        <select value={tz} onChange={(e) => setTz(e.target.value)}>
+          {TIMEZONES.map((z) => (
+            <option key={z} value={z}>{z.replaceAll('_', ' ')}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="btn btn-outline"
+          // A blank row is the slot for the next time — no point stacking two.
+          disabled={rows.some((t) => !t)}
+          onClick={() => setTimes([...rows, ''])}
+        >
+          ＋ Add time
+        </button>
+        {rows.some(Boolean) && (
+          <button type="button" className="btn btn-outline" onClick={() => setTimes([])}>
+            Clear all
+          </button>
+        )}
+      </div>
+    </>
+  );
 }
 
 // The reference points a scenario pins, shown under the scenario dropdowns
@@ -121,6 +194,137 @@ function ScenarioSummary({ scenario }) {
             : scenario.config[f.key]}
         </span>
       ))}
+    </div>
+  );
+}
+
+/**
+ * WRITE SEMANTICS for a run — the part "completed" hides.
+ *
+ * One row per pipeline step, live as it executes: a badge for how the step
+ * touched its table, the rows it moved, and one line of plain English saying
+ * what that mode means for that table. The distinction being drawn is that
+ * only the amendments ledger (PRESERVED) carries state across runs; every
+ * other Silver table is REBUILT from scratch every single run, whether or not
+ * anything new arrived.
+ */
+function WriteSemantics({ writes }) {
+  const steps = writes?.steps || [];
+  const rejected = writes?.rejected || [];
+  if (!steps.length && !rejected.length) return null;
+
+  return (
+    <div className="run-detail-sec">
+      {/* Contracts the onboarding gate turned away. Shown ABOVE the write rows
+          because it explains a short load: those rows never reached staging,
+          so every count below is missing them on purpose. */}
+      {rejected.length > 0 && (
+        <div className="gate-reject">
+          <div className="gate-reject-head">
+            ⚠ {writes.rejectedContracts} contract
+            {writes.rejectedContracts === 1 ? '' : 's'} rejected — pipeline not registered
+          </div>
+          {rejected.map((r) => (
+            <div key={`${r.duns}|${r.name}`} className="gate-reject-row">
+              <span className="gate-reject-name">{r.name || '(no name)'}</span>
+              <span className="gate-reject-duns">{r.duns || '(no duns)'}</span>
+              <span className="gate-reject-rows">
+                {r.contracts} contract{r.contracts === 1 ? '' : 's'} held back
+                {/* Bronze keeps every load, so the archive can hold several
+                    copies of the same rejected contract. Say so rather than
+                    letting the two numbers look contradictory. */}
+                {r.rows > r.contracts && (
+                  <span className="gate-reject-copies"> · {r.rows} archived rows</span>
+                )}
+              </span>
+            </div>
+          ))}
+          <div className="gate-reject-fix">
+            Their TSP is not in the run&apos;s onboarding register, so their contracts were
+            not loaded. Either the pipeline has no row in the reference table (add one, and
+            add it to the scenario if it pins specific pipelines), or its row was skipped
+            because its AmendmentReporting is not “All Data” or “Changes Only” — the run
+            panel above names any pipeline left out for that reason. Everything else in this
+            load processed normally.
+          </div>
+        </div>
+      )}
+      {steps.length > 0 && (
+      <div className="run-detail-head">✎ Write semantics — what this run did to each table</div>
+      )}
+      {steps.map((step) => {
+        const info = WRITE_MODE_INFO[step.mode] || WRITE_MODE_INFO.skipped;
+        const note = partialSkipNote(step);
+        const tables = step.tables.join(', ');
+        return (
+          <div key={step.key} className={`write-row ${step.status}`}>
+            <div className="write-row-top">
+              <span
+                className={`write-badge ${info.tone}`}
+                title={
+                  info.title +
+                  (step.certain
+                    ? ''
+                    : '\n\n(Inferred from the transformation name — this run\'s log ' +
+                      'did not state the write mode outright.)')
+                }
+              >
+                {info.label}
+              </span>
+              <span className="write-step-label" title={tables || undefined}>
+                {WRITE_STEPS[step.key]?.label || step.key}
+              </span>
+              {step.status === 'running' && <span className="spin">⟳</span>}
+              {note && <span className="write-note">{note}</span>}
+              <span className="write-rows">
+                {typeof step.rows === 'number'
+                  ? `${step.rows.toLocaleString()} row${step.rows === 1 ? '' : 's'}`
+                  : '…'}
+                {/* A step spanning several tables (stage 5 core/locations/rates)
+                    sums rows of the SAME grain, but say how many tables that is
+                    so the number is never mistaken for one table's size. */}
+                {step.count > 1 && (
+                  <span className="write-rows-sub"> · {step.count} tables</span>
+                )}
+              </span>
+            </div>
+            <div className="write-copy">{writeStepCopy(step, writes)}</div>
+            {step.errors.length > 0 && (
+              <div className="write-copy write-error">{step.errors.join(' · ')}</div>
+            )}
+          </div>
+        );
+      })}
+      {writes.anyRebuilt && (
+        <div className="write-caveat">
+          <span className="write-caveat-icon">ⓘ</span>
+          {REBUILD_ID_WARNING}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * How the run ended, as ONE statement: that every stage finished, and whether
+ * anything actually changed. These were two stacked banners before, which read
+ * as two unrelated verdicts — "complete" is only the first half of the answer,
+ * so the outcome and the verdict belong in the same block.
+ */
+function RunOutcome({ verdict }) {
+  return (
+    <div className={`wf-outcome ${verdict?.kind || 'plain'}`}>
+      <span className="wf-outcome-icon">✓</span>
+      <div className="wf-outcome-body">
+        <div className="wf-outcome-head">
+          Workflow complete — every pipeline stage finished successfully.
+        </div>
+        {verdict && (
+          <div className="wf-outcome-verdict">
+            <strong>{verdict.headline}</strong> {verdict.detail}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -168,24 +372,155 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const removePick = (key, i) =>
     setScenarioPicks((p) => ({ ...p, [key]: p[key].filter((_, idx) => idx !== i) }));
 
+  // Every field that can hold more than one value. Source is one-per-scenario,
+  // so there is nothing to "add all" of.
+  const multiFields = SCENARIO_FIELDS.filter((f) => !f.single);
+  const choicesFor = (key) => scenarioOptions?.[key] || [];
+  const chosenFor = (key) => (scenarioPicks[key] || []).filter(Boolean);
+  const fieldFull = (key) => {
+    const n = choicesFor(key).length;
+    return n > 0 && chosenFor(key).length === n;
+  };
+
+  // Total options across every multi-value reference field, and whether the
+  // whole form already holds them. Fields with no options yet (a reference
+  // table that is empty or missing) are ignored rather than blocking "full".
+  const populatedFields = multiFields.filter((f) => choicesFor(f.key).length > 0);
+  const totalChoices = populatedFields.reduce((n, f) => n + choicesFor(f.key).length, 0);
+  const everythingChosen =
+    populatedFields.length > 0 && populatedFields.every((f) => fieldFull(f.key));
+
+  /** Fill EVERY reference field with all of its options, or clear them all. */
+  const toggleEverything = () => {
+    const clearing = everythingChosen;
+    setScenarioPicks((p) => {
+      const next = { ...p };
+      for (const f of populatedFields) next[f.key] = clearing ? [''] : [...choicesFor(f.key)];
+      return next;
+    });
+    autoShippersRef.current = []; // the user now owns every pick — see toggleAll
+  };
+
+  /**
+   * Select every option for a field, or clear it when they are all already in.
+   *
+   * Clicking this is the user taking manual control of the field, so anything
+   * the pipeline mapping put there stops counting as auto-filled — otherwise
+   * the next pipeline change would retract picks the user just asked for.
+   */
+  const toggleAll = (key, choices) => {
+    setScenarioPicks((p) => {
+      const chosen = (p[key] || []).filter(Boolean);
+      const everything = choices.length > 0 && chosen.length === choices.length;
+      return { ...p, [key]: everything ? [''] : [...choices] };
+    });
+    if (key === 'shipper') autoShippersRef.current = [];
+  };
+
+  // Pipeline DUNS -> the shippers that trade on it, from /api/scenario-options.
+  // Not reference data anyone maintains: it is read off the loaded contracts.
+  const [pipelineShippers, setPipelineShippers] = useState({});
+  // Which shipper picks this mapping put there, so changing a pipeline can
+  // retract ITS shippers without disturbing any the user added by hand.
+  const autoShippersRef = useRef([]);
+  // Set while a saved scenario is being loaded into the form, to stop the
+  // fill from widening picks that were deliberately narrowed.
+  const skipAutoFillRef = useRef(false);
+  const pipelineKey = (scenarioPicks.pipeline || []).join('|');
+
+  useEffect(() => {
+    // Loading a saved scenario: its shippers are already exactly what was
+    // stored, so take them as-is and treat them as the user's own.
+    if (skipAutoFillRef.current) {
+      skipAutoFillRef.current = false;
+      autoShippersRef.current = [];
+      return;
+    }
+    // A pipeline is picked as "Name (DUNS)" — the DUNS is what maps.
+    const derived = [];
+    for (const label of scenarioPicks.pipeline || []) {
+      const duns = /\(([^()]+)\)\s*$/.exec(label || '')?.[1]?.trim();
+      for (const sh of (duns && pipelineShippers[duns]) || []) {
+        if (!derived.includes(sh)) derived.push(sh);
+      }
+    }
+    const previous = autoShippersRef.current;
+    const unchanged =
+      derived.length === previous.length && derived.every((d, i) => d === previous[i]);
+    if (unchanged) return;
+
+    setScenarioPicks((p) => {
+      // Anything not placed by the last auto-fill is the user's own pick.
+      const manual = (p.shipper || []).filter((v) => v && !previous.includes(v));
+      const next = [...new Set([...derived, ...manual])];
+      return { ...p, shipper: next.length ? next : [''] };
+    });
+    autoShippersRef.current = derived;
+    // pipelineKey (not the array) so this settles instead of re-firing on every
+    // scenarioPicks change, including the one this effect itself makes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineKey, pipelineShippers]);
+
   useEffect(() => {
     api('/api/scenarios')
       .then((d) => setScenarios(d.scenarios))
       .catch((err) => setScenarioError(err.message));
     api('/api/scenario-options')
-      .then((d) => setScenarioOptions(d.options))
+      .then((d) => {
+        setScenarioOptions(d.options);
+        setPipelineShippers(d.pipelineShippers || {});
+      })
       .catch(() => {
         // dropdowns just render empty — the create form still works
       });
   }, []);
+
+  // Which scenario the form is editing, or null when it is creating a new one.
+  // Editing reuses the create form outright rather than duplicating it, so the
+  // bulk-add buttons and the pipeline->shipper fill work the same either way.
+  const [editingScenario, setEditingScenario] = useState(null);
+
+  const startEditScenario = (s) => {
+    setEditingScenario(s);
+    setScenarioName(s.name || '');
+    setScenarioDesc(s.description || '');
+    setScenarioPicks({
+      ...emptyPicks(),
+      ...Object.fromEntries(
+        SCENARIO_FIELDS.map((f) => {
+          const v = s.config?.[f.key];
+          const arr = Array.isArray(v) ? v : v ? [v] : [];
+          return [f.key, arr.length ? arr : ['']];
+        })
+      ),
+    });
+    // Load the scenario's shippers EXACTLY as saved. Without this the
+    // pipeline->shipper fill would see the pipelines arrive and re-add the
+    // full mapped set, silently widening a scenario that was deliberately
+    // narrowed.
+    skipAutoFillRef.current = true;
+    setScenarioError('');
+    if (!scenariosOpen) toggleScenarios();
+  };
+
+  const cancelEditScenario = () => {
+    setEditingScenario(null);
+    setScenarioName('');
+    setScenarioDesc('');
+    setScenarioPicks(emptyPicks());
+    autoShippersRef.current = [];
+    setScenarioError('');
+  };
 
   const createScenario = async () => {
     if (!scenarioName.trim() || scenarioBusy) return;
     setScenarioBusy(true);
     setScenarioError('');
     try {
-      const { scenario } = await api('/api/scenarios', {
-        method: 'POST',
+      const { scenario } = await api(
+        editingScenario ? `/api/scenarios/${editingScenario.id}` : '/api/scenarios',
+        {
+        method: editingScenario ? 'PUT' : 'POST',
         body: {
           name: scenarioName.trim(),
           description: scenarioDesc.trim(),
@@ -195,11 +530,18 @@ export default function WorkflowPanel({ onPipelineRan }) {
             )
           ),
         },
-      });
-      setScenarios((s) => [...s, scenario]);
+      }
+      );
+      setScenarios((list) =>
+        list.some((x) => x.id === scenario.id)
+          ? list.map((x) => (x.id === scenario.id ? scenario : x))
+          : [...list, scenario]
+      );
+      setEditingScenario(null);
       setScenarioName('');
       setScenarioDesc('');
       setScenarioPicks(emptyPicks());
+      autoShippersRef.current = [];
     } catch (err) {
       setScenarioError(err.message);
     } finally {
@@ -232,7 +574,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const [draftName, setDraftName] = useState('');
   const [draftSources, setDraftSources] = useState(ALL_SOURCE_KEYS);
   const [draftScenario, setDraftScenario] = useState(''); // one scenario id (as string)
-  const [draftTime, setDraftTime] = useState(''); // "HH:MM", empty = no schedule
+  const [draftTimes, setDraftTimes] = useState([]); // ["HH:MM", …], empty = no schedule
   const [draftTz, setDraftTz] = useState(LOCAL_TZ);
   // Run state:
   // { id, trigger, batchId, sourceStates, stageStates, github, githubRuns,
@@ -277,7 +619,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
     setDraftName('');
     setDraftSources(ALL_SOURCE_KEYS);
     setDraftScenario('');
-    setDraftTime('');
+    setDraftTimes([]);
     setDraftTz(LOCAL_TZ);
   };
 
@@ -286,7 +628,8 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const name = draftName.trim() || `Workflow ${workflows.length + 1}`;
     // Keep sources in pipeline order regardless of click order
     const sources = ALL_SOURCE_KEYS.filter((k) => draftSources.includes(k));
-    const schedule = draftTime ? { time: draftTime, tz: draftTz } : null;
+    const times = [...new Set(draftTimes.filter(Boolean))].sort();
+    const schedule = times.length ? { times, tz: draftTz } : null;
     // Every workflow runs the full pipeline: Stage 1 plus all of Stages 2-5.
     // Components (pipelines, shippers, rec-del pairings) live in their own
     // warehouse tables now, not on the workflow itself.
@@ -323,7 +666,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
       name: wf.name,
       sources: wf.sources,
       scenario: String((wf.scenarios || [])[0] ?? ''),
-      time: wf.schedule?.time || '',
+      times: scheduleTimes(wf.schedule),
       tz: wf.schedule?.tz || LOCAL_TZ,
     });
   };
@@ -350,7 +693,10 @@ export default function WorkflowPanel({ onPipelineRan }) {
             name: editDraft.name.trim() || w.name,
             sources: ALL_SOURCE_KEYS.filter((k) => editDraft.sources.includes(k)),
             scenarios: editDraft.scenario ? [Number(editDraft.scenario)] : [],
-            schedule: editDraft.time ? { time: editDraft.time, tz: editDraft.tz } : null,
+            schedule: (() => {
+              const t = [...new Set((editDraft.times || []).filter(Boolean))].sort();
+              return t.length ? { times: t, tz: editDraft.tz } : null;
+            })(),
           }
         : w
     );
@@ -407,6 +753,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
       stageStates: Array(wf.stageCount).fill('pending'),
       github: null,
       githubRuns: null,
+      writes: null, // write semantics per step, filled in by the polling effect
       githubDone: false,
       ok: null,
       error: null,
@@ -420,8 +767,13 @@ export default function WorkflowPanel({ onPipelineRan }) {
     //
     // A bare 5xx/network failure usually means the dev API was mid-restart
     // (node --watch), so retry once before treating it as a real failure.
+    // The attached scenario rides along: the server pins the pipeline's
+    // shipper scope to its picks before dispatching (none attached = unscoped).
     const trigger12 = () =>
-      api('/api/pipeline/trigger-stage12', { method: 'POST', body: { sources: wf.sources } });
+      api('/api/pipeline/trigger-stage12', {
+        method: 'POST',
+        body: { sources: wf.sources, scenarioId: wf.scenarios?.[0] ?? null },
+      });
     try {
       let github;
       try {
@@ -468,6 +820,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
         stageStates: Array(saved.stageCount).fill('pending'),
         github: saved.github,
         githubRuns: null,
+        writes: null,
         githubDone: false,
         ok: null,
         error: null,
@@ -492,10 +845,15 @@ export default function WorkflowPanel({ onPipelineRan }) {
     const tick = () => {
       if (busyRef.current) return;
       for (const wf of workflowsRef.current) {
-        if (!wf.schedule) continue;
-        const { time, tz } = wf.schedule;
-        if (currentTimeIn(tz) !== time) continue;
-        const fireKey = `${dateKeyIn(tz)} ${time}`;
+        const times = scheduleTimes(wf.schedule);
+        if (!times.length) continue;
+        const { tz } = wf.schedule;
+        // Fire on whichever of the workflow's times is on the clock right now.
+        const due = times.find((t) => t === currentTimeIn(tz));
+        if (!due) continue;
+        // The key carries the time, so several triggers in one day each fire
+        // once rather than the first one blocking the rest.
+        const fireKey = `${dateKeyIn(tz)} ${due}`;
         if (firedRef.current[wf.id] === fireKey) continue;
         firedRef.current[wf.id] = fireKey;
         runWorkflow(wf, 'auto');
@@ -523,8 +881,12 @@ export default function WorkflowPanel({ onPipelineRan }) {
         if (!cur) return;
         // 60s of clock-skew slack; runs older than this are a previous dispatch
         const since = new Date(cur.startedAt - 60000).toISOString();
+        // writes=1 also reads the jobs' logs for what each transformation did
+        // to its table (appended / preserved / rebuilt / skipped) — the part a
+        // bare "completed" hides. Best effort on the server, so a run with no
+        // readable logs still tracks normally.
         const res = await api(
-          `/api/pipeline/run-status?files=${files.join(',')}&since=${encodeURIComponent(since)}`
+          `/api/pipeline/run-status?files=${files.join(',')}&since=${encodeURIComponent(since)}&writes=1`
         );
         if (cancelled) return;
         // One run per dispatched feed; stages 3-5 are jobs INSIDE that run.
@@ -581,11 +943,18 @@ export default function WorkflowPanel({ onPipelineRan }) {
         const done = allDone;
         const ok = done && started.every((x) => x.run.conclusion === 'success');
 
+        // Write semantics for this dispatch, rolled up across every job's log.
+        // Absent (older server, unreadable logs) simply means no write block.
+        const writes = res.writes || null;
+
         if (done && !cur.githubDone) {
           recordLastRun(cur.id, {
             at: Date.now(),
             status: ok ? 'success' : 'failed',
             trigger: cur.trigger,
+            // Keep the verdict with the run so the card can still say whether
+            // anything actually changed after a refresh, not just "completed".
+            verdict: runWriteVerdict(writes),
           });
           localStorage.removeItem(ACTIVE_RUN_KEY);
           onPipelineRan?.();
@@ -597,6 +966,7 @@ export default function WorkflowPanel({ onPipelineRan }) {
                 sourceStates,
                 stageStates,
                 githubRuns,
+                writes: writes || r.writes,
                 githubDone: done,
                 finished: done ? true : r.finished,
                 ok: done ? ok : r.ok,
@@ -648,8 +1018,17 @@ export default function WorkflowPanel({ onPipelineRan }) {
         A scenario pins one choice per reference data point. Pick from the dropdowns —
         fed by the tables on the <Link to="/reference">Reference Data</Link> tab — save
         the scenario, then attach it to a workflow below and set its automatic times.
+        When that workflow runs, the scenario's <strong>shippers</strong> become the
+        pipeline's scope: only their contracts pass Stage&nbsp;3. No scenario (or no
+        shippers picked) = every shipper passes.
       </p>
       {scenarioError && <div className="status-line err">{scenarioError}</div>}
+      {editingScenario && (
+        <div className="scenario-editing-note">
+          ✎ Editing <strong>{editingScenario.name}</strong> — it keeps its id, so any workflow
+          it is attached to stays attached.
+        </div>
+      )}
       <div className="scenario-create">
         <input
           type="text"
@@ -667,13 +1046,54 @@ export default function WorkflowPanel({ onPipelineRan }) {
           onKeyDown={(e) => e.key === 'Enter' && createScenario()}
         />
       </div>
+      {totalChoices > 0 && (
+        <div className="scenario-bulk">
+          <button type="button" className="scenario-bulk-btn" onClick={toggleEverything}>
+            {everythingChosen
+              ? '✕ Clear every reference field'
+              : `＋ Add all ${totalChoices} reference options`}
+          </button>
+          <span className="scenario-bulk-note">
+            {everythingChosen
+              ? 'Every pipeline, shipper, location and pairing is pinned.'
+              : `Pins every option across ${populatedFields
+                  .map((f) => f.label.toLowerCase())
+                  .join(', ')}.`}
+          </span>
+        </div>
+      )}
       <div className="scenario-rows">
         {SCENARIO_FIELDS.map((f) => {
           const picks = scenarioPicks[f.key] || [''];
           const choices = scenarioOptions?.[f.key] || [];
+          const chosen = picks.filter(Boolean);
+          const allChosen = choices.length > 0 && chosen.length === choices.length;
           return (
             <div key={f.key} className="scenario-field-group">
-              <label>{f.label}</label>
+              <div className="scenario-field-head">
+                <label>{f.label}</label>
+                {/* Single-value fields (Source) have nothing to add all of. */}
+                {!f.single && choices.length > 1 && (
+                  <button
+                    type="button"
+                    className="scenario-select-all"
+                    title={
+                      allChosen
+                        ? `Remove every ${f.label.toLowerCase()}`
+                        : `Add all ${choices.length} ${f.label.toLowerCase()} options`
+                    }
+                    onClick={() => toggleAll(f.key, choices)}
+                  >
+                    {allChosen ? 'Clear all' : `Add all ${choices.length}`}
+                  </button>
+                )}
+              </div>
+              {f.key === 'shipper' && autoShippersRef.current.length > 0 && (
+                <span className="scenario-auto-note">
+                  {autoShippersRef.current.length} filled in from the selected pipeline
+                  {(scenarioPicks.pipeline || []).filter(Boolean).length > 1 ? 's' : ''} — edit freely
+                </span>
+              )}
               {picks.map((val, i) => (
                 <div key={i} className="scenario-row">
                   <select
@@ -723,8 +1143,17 @@ export default function WorkflowPanel({ onPipelineRan }) {
           disabled={!scenarioName.trim() || scenarioBusy}
           onClick={createScenario}
         >
-          {scenarioBusy ? '⟳ Saving…' : 'Save Scenario'}
+          {scenarioBusy
+            ? '⟳ Saving…'
+            : editingScenario
+              ? 'Update Scenario'
+              : 'Save Scenario'}
         </button>
+        {editingScenario && (
+          <button type="button" className="btn btn-outline" onClick={cancelEditScenario}>
+            Cancel
+          </button>
+        )}
       </div>
       {scenarios.length > 0 ? (
         <div className="scenario-list">
@@ -748,6 +1177,14 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                className="scenario-edit-btn"
+                title="Edit this scenario"
+                onClick={() => startEditScenario(s)}
+              >
+                ✎ Edit
+              </button>
               <button
                 type="button"
                 className="cc-remove"
@@ -882,29 +1319,21 @@ export default function WorkflowPanel({ onPipelineRan }) {
           {/* Optional scheduled trigger time */}
           <div className="wf-schedule">
             <div className="wf-sources-head" style={{ marginBottom: 8 }}>
-              <strong>Trigger time (optional)</strong>
-              <span className="muted">run this workflow automatically every day at a set time</span>
+              <strong>Trigger times (optional)</strong>
+              <span className="muted">
+                run this workflow automatically every day — add as many times as you need
+              </span>
             </div>
-            <div className="wf-schedule-row">
-              <input
-                type="time"
-                value={draftTime}
-                onChange={(e) => setDraftTime(e.target.value)}
-              />
-              <select value={draftTz} onChange={(e) => setDraftTz(e.target.value)}>
-                {TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>{tz.replaceAll('_', ' ')}</option>
-                ))}
-              </select>
-              {draftTime && (
-                <button type="button" className="btn btn-outline" onClick={() => setDraftTime('')}>
-                  Clear
-                </button>
-              )}
-            </div>
+            <TriggerTimes
+              times={draftTimes}
+              tz={draftTz}
+              setTimes={setDraftTimes}
+              setTz={setDraftTz}
+            />
             <p className="muted" style={{ marginTop: 8, fontSize: '0.78rem', color: 'var(--slate)' }}>
-              {draftTime
-                ? `Will run daily at ${draftTime} (${draftTz.replaceAll('_', ' ')}) while the dashboard is open.`
+              {draftTimes.filter(Boolean).length
+                ? `Will run daily at ${[...new Set(draftTimes.filter(Boolean))].sort().join(', ')} ` +
+                  `(${draftTz.replaceAll('_', ' ')}) while the dashboard is open.`
                 : 'No trigger time set — this workflow will be manual-only. Pick a time above to schedule it.'}
             </p>
           </div>
@@ -1002,33 +1431,15 @@ export default function WorkflowPanel({ onPipelineRan }) {
                   </>
                 )}
                 <div className="wf-sources-head" style={{ margin: '16px 0 8px' }}>
-                  <strong>Trigger time</strong>
-                  <span className="muted">runs daily at this time — leave empty for manual-only</span>
+                  <strong>Trigger times</strong>
+                  <span className="muted">runs daily at these times — leave empty for manual-only</span>
                 </div>
-                <div className="wf-schedule-row">
-                  <input
-                    type="time"
-                    value={editDraft.time}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, time: e.target.value }))}
-                  />
-                  <select
-                    value={editDraft.tz}
-                    onChange={(e) => setEditDraft((d) => ({ ...d, tz: e.target.value }))}
-                  >
-                    {TIMEZONES.map((tz) => (
-                      <option key={tz} value={tz}>{tz.replaceAll('_', ' ')}</option>
-                    ))}
-                  </select>
-                  {editDraft.time && (
-                    <button
-                      type="button"
-                      className="btn btn-outline"
-                      onClick={() => setEditDraft((d) => ({ ...d, time: '' }))}
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
+                <TriggerTimes
+                  times={editDraft.times || []}
+                  tz={editDraft.tz}
+                  setTimes={(times) => setEditDraft((d) => ({ ...d, times }))}
+                  setTz={(tz) => setEditDraft((d) => ({ ...d, tz }))}
+                />
                 <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
                   <button
                     className="btn btn-navy"
@@ -1066,19 +1477,19 @@ export default function WorkflowPanel({ onPipelineRan }) {
                         {s.name}
                       </span>
                     ))}
-                  {wf.schedule && (
+                  {scheduleTimes(wf.schedule).length > 0 && (
                     <span className="badge scheduled" style={{ marginLeft: 6 }}>
                       scheduled
                     </span>
                   )}
                 </h3>
-                {wf.schedule ? (
+                {scheduleTimes(wf.schedule).length ? (
                   <div className="wf-schedule-line">
                     <span className="wf-schedule-clock">🕒</span>
-                    Runs daily at <strong>{wf.schedule.time}</strong>
+                    Runs daily at <strong>{scheduleTimes(wf.schedule).join(', ')}</strong>
                     <span className="wf-schedule-tz">{wf.schedule.tz.replaceAll('_', ' ')}</span>
                     <span className="wf-schedule-next">
-                      next run {nextRunIn(wf.schedule.time, wf.schedule.tz)}
+                      next run {nextRunIn(scheduleTimes(wf.schedule), wf.schedule.tz)}
                     </span>
                     <button
                       type="button"
@@ -1108,6 +1519,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
                     {wf.lastRun.trigger && (
                       <span className={`badge ${wf.lastRun.trigger === 'auto' ? 'scheduled' : 'manual'}`}>
                         {wf.lastRun.trigger === 'auto' ? 'automatic run' : 'manual run'}
+                      </span>
+                    )}
+                    {/* "completed" alone can't tell two identical runs apart —
+                        carry the verdict so a no-op rerun still reads as one. */}
+                    {wf.lastRun.verdict && (
+                      <span
+                        className={`badge write-verdict-badge ${wf.lastRun.verdict.kind}`}
+                        title={wf.lastRun.verdict.detail}
+                      >
+                        {wf.lastRun.verdict.kind === 'noop' ? 'no new postings' : 'new postings applied'}
                       </span>
                     )}
                   </div>
@@ -1196,9 +1617,69 @@ export default function WorkflowPanel({ onPipelineRan }) {
               </div>
             </div>
 
+            {/* One panel for the whole run: where it ran, then what it wrote.
+                These were separate boxes and read as unrelated reports — the
+                write semantics only make sense as detail ON these runs. */}
             {thisRun?.github && (
-              <div className="gh-runs">
-                <div className="gh-runs-head">⚙ GitHub Actions — live pipeline runs</div>
+              <div className="run-detail">
+                <div className="run-detail-sec">
+                <div className="run-detail-head">⚙ GitHub Actions — live pipeline runs</div>
+                {thisRun.github.scope && (
+                  <div className={`gh-scope-line ${thisRun.github.scope.scoped ? 'scoped' : ''}`}>
+                    {thisRun.github.scope.scoped ? (
+                      <>
+                        🎯 Scenario <strong>{thisRun.github.scope.scenarioName}</strong> applied —
+                        scoped to {thisRun.github.scope.shippers.length} shipper
+                        {thisRun.github.scope.shippers.length > 1 ? 's' : ''}:{' '}
+                        {thisRun.github.scope.shippers
+                          .map((s) => s.name || s.duns)
+                          .join(', ')}
+                      </>
+                    ) : (
+                      <>Unscoped run — every shipper passes.</>
+                    )}
+                    {thisRun.github.scope.unmatched?.length > 0 && (
+                      <> (no DUNS found in: {thisRun.github.scope.unmatched.join(', ')})</>
+                    )}
+                  </div>
+                )}
+                {/* The onboarding register this run was given. Worth its own
+                    line because a pipeline can be in the reference table and
+                    still miss the register — see the warning below. */}
+                {thisRun.github.pipelines && (
+                  <div
+                    className={`gh-scope-line ${thisRun.github.pipelines.scoped ? 'scoped' : ''}`}
+                  >
+                    {thisRun.github.pipelines.applied ? (
+                      <>
+                        🛢 Pipeline register —{' '}
+                        {thisRun.github.pipelines.scoped
+                          ? 'the pipelines this scenario pins'
+                          : 'every onboarded pipeline'}
+                        : {thisRun.github.pipelines.pipelines.map((p) => p.name || p.duns).join(', ')}
+                      </>
+                    ) : (
+                      <>
+                        Pipeline register left empty — {thisRun.github.pipelines.reason}. Every
+                        pipeline passes.
+                      </>
+                    )}
+                    {thisRun.github.pipelines.unusable?.length > 0 && (
+                      <div className="gh-scope-warn">
+                        ⚠ Left out of the register:{' '}
+                        {thisRun.github.pipelines.unusable
+                          .map((p) => `${p.name || '(no name)'} (${p.duns})`)
+                          .join(', ')}
+                        . Their row in Configure Components → Pipelines has no usable
+                        AmendmentReporting — set it to “All Data” or “Changes Only” (“NA” is
+                        only meaningful on an IOC-sourced row that also has a non-NA row for
+                        the same DUNS). This is about the reference table, not this feed: it
+                        only costs you something if the load actually carries one of their
+                        contracts, and then that contract is held back and listed below.
+                      </div>
+                    )}
+                  </div>
+                )}
                 {(
                   thisRun.githubRuns ||
                   thisRun.github.dispatched.map((f) => ({ key: f, name: f, state: 'queued', url: null }))
@@ -1222,16 +1703,16 @@ export default function WorkflowPanel({ onPipelineRan }) {
                     )}
                   </div>
                 ))}
+                </div>
+                {/* What the run did to each table — live, as the jobs execute */}
+                <WriteSemantics writes={thisRun.writes} />
               </div>
             )}
             {thisRun?.finished &&
               thisRun.githubDone &&
               !thisRun.error &&
               (thisRun.ok ? (
-                <div className="wf-complete">
-                  <span className="wf-complete-icon">✓</span>
-                  Workflow complete — every pipeline stage finished successfully.
-                </div>
+                <RunOutcome verdict={runWriteVerdict(thisRun.writes)} />
               ) : (
                 <div className="status-line err">
                   Pipeline run failed — open the runs above for logs. This workflow run was

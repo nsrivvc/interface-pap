@@ -15,6 +15,7 @@
 // The old two-repo repository_dispatch handoff is gone — prefer
 // workflow_dispatch everywhere.
 import { provider, FEED_KEYS, feed } from './providers/index.js';
+import { parseRunnerLog, summarizeWrites } from './runlog.js';
 
 // Env still wins, so a fork or a test branch needs no code change.
 const REPO =
@@ -108,13 +109,69 @@ export async function triggerIngest(source) {
   return { repo: REPO, ref: REF, dispatched: [file] };
 }
 
+// ---------- Write semantics from job logs ----------
+//
+// A job's status says whether it worked; only its LOG says what it did to the
+// tables — appended, preserved, rebuilt or skipped. runlog.js does the reading;
+// this fetches the text.
+//
+// Cache: a COMPLETED job's log is immutable, so parse it once and keep it. The
+// dashboard polls every few seconds, and without this each poll would re-download
+// every job's log for the whole run. In-progress jobs are re-fetched each time,
+// which is the point — that's what makes the write modes appear live. On Vercel
+// this is per-instance and simply starts cold, which costs a re-fetch, not
+// correctness.
+const logCache = new Map(); // jobId -> parsed transformations (completed jobs only)
+const LOG_CACHE_MAX = 400;
+
+/** Raw log text for one job, or "" if GitHub won't serve it (yet). */
+async function jobLogText(jobId, headers) {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/actions/jobs/${jobId}/logs`, {
+      headers,
+      redirect: 'follow',
+    });
+    // 404 is routine for a job that has not produced output yet — not an error.
+    if (!res.ok) return '';
+    return await res.text();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Parsed write semantics for one job. Completed jobs are memoized; running
+ * jobs are re-read every poll so the badges fill in as the run proceeds.
+ */
+async function jobWrites(job, headers) {
+  const done = job.status === 'completed';
+  if (done && logCache.has(job.id)) return logCache.get(job.id);
+
+  const text = await jobLogText(job.id, headers);
+  if (!text) return { transformations: [], rejected: [] };
+  const { transformations, rejected } = parseRunnerLog(text);
+  const parsed = { transformations, rejected };
+
+  if (done) {
+    if (logCache.size >= LOG_CACHE_MAX) logCache.delete(logCache.keys().next().value);
+    logCache.set(job.id, parsed);
+  }
+  return parsed;
+}
+
 /**
  * Live status of a dispatch: for each dispatched workflow file, the newest run
  * created since `sinceIso` plus its jobs. Stages 3-5 are jobs INSIDE each
  * feed's run now (named "stage 3 - bronze to silver / run", "final - rates /
  * run", …), so there is no separate Silver run to track.
+ *
+ * With `withWrites`, each job's log is also read for the write semantics of the
+ * transformations it ran, and the whole dispatch is rolled up into `writes` —
+ * which table was preserved, which was rebuilt, and how many rows each moved.
+ * Log reading is best effort: it never fails the status call, so the stage
+ * pills keep updating even if the logs are unavailable.
  */
-export async function pipelineRunStatus(files, sinceIso) {
+export async function pipelineRunStatus(files, sinceIso, { withWrites = false } = {}) {
   const token = requireToken();
   const wanted = (files || []).filter((f) => KNOWN_WORKFLOWS.has(f));
   if (!wanted.length) throw new Error('No known workflow files requested.');
@@ -126,6 +183,7 @@ export async function pipelineRunStatus(files, sinceIso) {
       const res = await fetch(`${run.jobs_url}?per_page=50`, { headers });
       if (!res.ok) return [];
       return ((await res.json()).jobs || []).map((j) => ({
+        id: j.id,
         name: j.name,
         status: j.status,
         conclusion: j.conclusion,
@@ -158,7 +216,20 @@ export async function pipelineRunStatus(files, sinceIso) {
     })
   );
 
-  return { repo: REPO, runs };
+  if (!withWrites) return { repo: REPO, runs };
+
+  // Read every started job's log. Queued jobs have nothing to say yet.
+  const jobs = runs.flatMap((x) => x.jobs || []).filter((j) => j.status !== 'queued');
+  const empty = { transformations: [], rejected: [] };
+  const perJob = await Promise.all(jobs.map((j) => jobWrites(j, headers).catch(() => empty)));
+  return {
+    repo: REPO,
+    runs,
+    writes: summarizeWrites(
+      perJob.flatMap((r) => r.transformations),
+      perJob.flatMap((r) => r.rejected)
+    ),
+  };
 }
 
 /**
