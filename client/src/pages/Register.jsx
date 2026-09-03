@@ -1,7 +1,10 @@
-// Account creation form — name, email, password (stored hashed in Neon).
+// Public sign-up — name, email, password (stored hashed in Neon). Accounts
+// made here are read-only Viewers; an admin promotes them from the Accounts
+// tab. Admins can also create an account of either role from there directly.
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth-context';
+import { homePath } from '../accounts';
 
 export default function Register() {
   const { register } = useAuth();
@@ -17,8 +20,7 @@ export default function Register() {
     setError('');
     setBusy(true);
     try {
-      await register(name, email, password);
-      navigate('/');
+      navigate(homePath(await register(name, email, password)));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -41,7 +43,9 @@ export default function Register() {
       <div className="auth-form-side">
         <form className="auth-card" onSubmit={submit}>
           <h2>Create your account</h2>
-          <p className="muted">It only takes a minute</p>
+          <p className="muted">
+            New accounts get read-only access — an admin can grant more.
+          </p>
           {error && <div className="auth-error">{error}</div>}
           <div className="field">
             <label>Full Name</label>

@@ -27,6 +27,7 @@ export function AuthProvider({ children }) {
     });
     setToken(token);
     setUser(user);
+    return user; // the caller routes by role — see homePath()
   };
 
   const register = async (name, email, password) => {
@@ -36,6 +37,7 @@ export function AuthProvider({ children }) {
     });
     setToken(token);
     setUser(user);
+    return user;
   };
 
   const logout = () => {

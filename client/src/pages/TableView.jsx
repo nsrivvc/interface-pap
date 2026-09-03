@@ -6,6 +6,8 @@ import { Link, useParams } from 'react-router-dom';
 import { AgGridReact } from 'ag-grid-react';
 import { api, apiDownload } from '../api';
 import Header from '../components/Header';
+import { useAuth } from '../auth-context';
+import { can } from '../accounts';
 import { gridTheme } from '../grid-theme';
 import { buildGoldReport, describeFilterModel } from '../gold-report';
 import { pbiService, goldDatasetPayload, createReportConfig, editReportConfig, ensureStarterReport } from '../powerbi';
@@ -22,6 +24,11 @@ function formatCell(value) {
 
 export default function TableView() {
   const { name } = useParams();
+  const { user } = useAuth();
+  // Power BI publishes a dataset into the workspace, so it is admin-only (the
+  // API refuses it for viewers too). The gold report is built in the browser
+  // from rows already on screen, so every account keeps that one.
+  const canReport = can(user, 'reports');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [quickFilter, setQuickFilter] = useState('');
@@ -260,23 +267,26 @@ export default function TableView() {
               >
                 ✨ Generate Gold Layer Table
               </button>
-              <button
-                className="btn"
-                onClick={() => { pbiRebooted.current = false; setPbi('boot'); }}
-                disabled={pbi === 'boot' || pbi === 'authoring'}
-                style={{
-                  marginLeft: 10,
-                  background: 'linear-gradient(120deg, #f2c811, #e8b30a)',
-                  border: 'none',
-                  color: '#1f2a44',
-                  fontWeight: 600,
-                }}
-              >
-                {pbi === 'boot' ? '⟳ Creating…' : pbi === 'authoring' ? '⟳ Building visuals…' : '⚡ Generate Power BI Report'}
-              </button>
+              {canReport && (
+                <button
+                  className="btn"
+                  onClick={() => { pbiRebooted.current = false; setPbi('boot'); }}
+                  disabled={pbi === 'boot' || pbi === 'authoring'}
+                  style={{
+                    marginLeft: 10,
+                    background: 'linear-gradient(120deg, #f2c811, #e8b30a)',
+                    border: 'none',
+                    color: '#1f2a44',
+                    fontWeight: 600,
+                  }}
+                >
+                  {pbi === 'boot' ? '⟳ Creating…' : pbi === 'authoring' ? '⟳ Building visuals…' : '⚡ Generate Power BI Report'}
+                </button>
+              )}
               <span className="muted" style={{ marginLeft: 12, fontSize: '0.83rem', color: 'var(--slate)' }}>
-                Both use the rows currently matching your filters — gold layer is an instant
-                snapshot; Power BI opens a live editing canvas.
+                {canReport
+                  ? 'Both use the rows currently matching your filters — gold layer is an instant snapshot; Power BI opens a live editing canvas.'
+                  : 'An instant snapshot of the rows currently matching your filters.'}
               </span>
 
               {pbi?.error && (
