@@ -12,8 +12,8 @@ export default function Dashboard() {
           <div className="eyebrow">Data Pipeline Interface</div>
           <h1>Contract Workflow Dashboard</h1>
           <p>
-            Create scenarios, attach them to workflows, trigger individual pipelines
-            manually, and schedule automatic daily runs.
+            Create scenarios, attach them to workflows, run them on demand, and
+            schedule automatic daily runs.
           </p>
         </div>
       </div>

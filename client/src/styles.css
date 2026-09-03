@@ -566,69 +566,6 @@ button {
   color: var(--slate);
 }
 
-/* ---- Manual Workflow (per-stage pipeline triggers) ---- */
-.mt-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 14px;
-}
-.mt-card {
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
-  padding: 12px 8px;
-}
-.mt-card.disabled {
-  background: #f2f4f8;
-  box-shadow: none;
-}
-.mt-stage-head {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--navy);
-  padding: 6px 10px 8px;
-}
-.mt-card.disabled .mt-stage-head {
-  color: #a6adbd;
-}
-.mt-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--navy);
-  cursor: pointer;
-  transition: background 0.12s ease;
-}
-.mt-item:hover:not(:disabled) {
-  background: #fdf0e5;
-}
-.mt-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-.mt-item-icon {
-  color: var(--orange);
-  font-size: 0.7rem;
-  margin-top: 3px;
-}
-.mt-coming-soon {
-  font-size: 0.78rem;
-  color: #a6adbd;
-  font-style: italic;
-  padding: 2px 10px 8px;
-}
-
 /* ---- Retrieve Source sub-menu (source checklist) ---- */
 .wf-sources {
   margin-top: 16px;
