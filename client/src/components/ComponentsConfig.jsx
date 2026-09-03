@@ -557,9 +557,16 @@ function Section({ id, title, hint, defaultOpen = false, right, first, children 
 // warehouse setting (public.source_config) saved the moment an option is
 // picked. NatGasHub and Cortex take per-source credentials (base URL +
 // key/username), verified against the API the moment they are saved; the
-// outcome shows as a connected/failed badge on the card. Configuration only
-// for now: retrieval still runs against the Mock-Up NatGasHub API until the
-// other sources are wired up.
+// outcome shows as a connected/failed badge on the card.
+//
+// Every source serves the same four feeds — Firm, IT, Awards and IOC — under
+// its own technical names and endpoint paths. Each card tucks them behind a
+// little Feeds dropdown, and its
+// "configure feeds" link opens a small table (public.source_feeds) where a
+// feed can be renamed, re-pathed or switched off for that source; each cell
+// saves on Enter / blur like the reference grids do. Configuration only for
+// now: retrieval still runs against the Mock-Up NatGasHub API until the other
+// sources are wired up.
 function SourceConfig() {
   const [config, setConfig] = useState(null); // { source, options }
   const [error, setError] = useState('');
@@ -572,6 +579,17 @@ function SourceConfig() {
   const [credDraft, setCredDraft] = useState({ baseUrl: '', username: '', apiKey: '' });
   const [credBusy, setCredBusy] = useState(''); // '' | 'save' | 'verify' | 'remove'
   const [credError, setCredError] = useState('');
+
+  // Feed editor — which source's feed table is open, unsaved cell edits keyed
+  // by feed, the feed whose save is running, and the last error. Saves go
+  // through one queue so a blur-commit and a checkbox click land in order.
+  const [feedsOpen, setFeedsOpen] = useState('');
+  const [feedDrafts, setFeedDrafts] = useState({}); // feedKey -> { technicalName?, path? }
+  const [feedBusy, setFeedBusy] = useState('');
+  const [feedError, setFeedError] = useState('');
+  const feedQueue = useRef(Promise.resolve());
+  // Which cards have their little Feeds dropdown open (sourceKey -> true)
+  const [feedListOpen, setFeedListOpen] = useState({});
 
   useEffect(() => {
     api('/api/source-config')
@@ -640,6 +658,7 @@ function SourceConfig() {
     setCredDraft({ baseUrl: conn?.baseUrl || '', username: conn?.username || '', apiKey: '' });
     setCredError('');
     setCredOpen(key);
+    setFeedsOpen(''); // one inline panel at a time
   };
 
   const saveCreds = async () => {
@@ -699,6 +718,93 @@ function SourceConfig() {
     }
   };
 
+  // ---- Feeds ----
+  // Every source serves the same four feeds; each row of the feed table saves
+  // on its own (Enter or clicking away), like the reference grids do.
+  const toggleFeeds = (key) => {
+    setFeedError('');
+    setFeedDrafts({});
+    setFeedsOpen((open) => (open === key ? '' : key));
+    setCredOpen(''); // one inline panel at a time
+  };
+
+  const toggleFeedList = (key) => setFeedListOpen((s) => ({ ...s, [key]: !s[key] }));
+
+  const applyFeed = (sourceKey, feed) =>
+    setConfig((c) => ({
+      ...c,
+      options: c.options.map((o) =>
+        o.key === sourceKey
+          ? { ...o, feeds: o.feeds.map((f) => (f.key === feed.key ? feed : f)) }
+          : o
+      ),
+    }));
+
+  const setFeedDraft = (feedKey, patch) =>
+    setFeedDrafts((d) => ({ ...d, [feedKey]: { ...d[feedKey], ...patch } }));
+
+  const dropFeedDraft = (feedKey) =>
+    setFeedDrafts((d) => {
+      const { [feedKey]: _gone, ...rest } = d;
+      return rest;
+    });
+
+  // Queue one request against a feed so consecutive edits land in order
+  const queueFeed = (sourceKey, feed, request) => {
+    setFeedBusy(feed.key);
+    setFeedError('');
+    feedQueue.current = feedQueue.current.then(async () => {
+      try {
+        const { feed: updated } = await request();
+        applyFeed(sourceKey, updated);
+        dropFeedDraft(feed.key);
+      } catch (err) {
+        setFeedError(err.message);
+      } finally {
+        setFeedBusy('');
+      }
+    });
+  };
+
+  // Save one feed's row: what is typed in it, with `patch` applied on top.
+  // Nothing is sent when nothing changed (a blur without an edit).
+  const saveFeed = (sourceKey, feed, patch = {}) => {
+    const draft = feedDrafts[feed.key] || {};
+    const next = {
+      technicalName: String(patch.technicalName ?? draft.technicalName ?? feed.technicalName).trim(),
+      path: String(patch.path ?? draft.path ?? feed.path).trim(),
+      enabled: patch.enabled ?? feed.enabled,
+    };
+    if (
+      next.technicalName === feed.technicalName &&
+      next.path === feed.path &&
+      next.enabled === feed.enabled
+    ) {
+      dropFeedDraft(feed.key);
+      return;
+    }
+    queueFeed(sourceKey, feed, () =>
+      api(`/api/source-config/${sourceKey}/feeds/${feed.key}`, { method: 'PUT', body: next })
+    );
+  };
+
+  // Commit whatever is typed into a feed's row (blur / Enter)
+  const commitFeed = (sourceKey, feed) => {
+    if (feedDrafts[feed.key]) saveFeed(sourceKey, feed);
+  };
+
+  // Drop a feed's override so the source's built-in default applies again
+  const resetFeed = (sourceKey, feed) =>
+    queueFeed(sourceKey, feed, () =>
+      api(`/api/source-config/${sourceKey}/feeds/${feed.key}`, { method: 'DELETE' })
+    );
+
+  // Enter commits (through blur), Escape throws the edit away
+  const feedKeyDown = (feedKey) => (e) => {
+    if (e.key === 'Enter') e.currentTarget.blur();
+    if (e.key === 'Escape') dropFeedDraft(feedKey);
+  };
+
   const badge = (o) => {
     if (!o.needsCredentials) return null;
     const conn = o.connection;
@@ -720,12 +826,17 @@ function SourceConfig() {
   };
 
   const openOpt = config?.options.find((o) => o.key === credOpen);
+  const feedOpt = config?.options.find((o) => o.key === feedsOpen);
+  // The base URL the feed paths hang off — server config for the mock, the
+  // saved credentials for the real sources
+  const feedBase =
+    feedOpt && (feedOpt.needsCredentials ? feedOpt.connection?.baseUrl : feedOpt.baseUrl);
 
   return (
     <Section
       id="source"
       title="Source"
-      hint="which API the workflow retrieves its source JSONs from"
+      hint="which API the workflow retrieves its source JSONs from, and how each names and serves its Firm, IT, Awards and IOC feeds"
       defaultOpen
       first
       right={
@@ -755,24 +866,82 @@ function SourceConfig() {
                     {o.label} {badge(o)}
                   </span>
                   <span className="cc-source-desc">{o.description}</span>
-                  {/* Credentials are offered only for the SELECTED source, so
-                      e.g. picking the mock leaves no credential fields around */}
-                  {o.needsCredentials && config.source === o.key && (
+                  {/* The four feeds this source serves, tucked behind a little
+                      dropdown so the card stays short: closed, it names them;
+                      open, it lists their technical names (a feed switched off
+                      for this source shows struck through) */}
+                  <span className="cc-feed-dd">
+                    <button
+                      type="button"
+                      className="cc-feed-dd-toggle"
+                      aria-expanded={Boolean(feedListOpen[o.key])}
+                      onClick={(e) => {
+                        e.preventDefault(); // don't flip the radio
+                        toggleFeedList(o.key);
+                      }}
+                    >
+                      <span className="cc-feed-dd-arrow">{feedListOpen[o.key] ? '▾' : '▸'}</span>
+                      Feeds
+                      <span className="cc-feed-dd-summary">
+                        {o.feeds.map((f) => (
+                          <span key={f.key} className={f.enabled ? undefined : 'off'}>
+                            {f.shortLabel}
+                          </span>
+                        ))}
+                      </span>
+                    </button>
+                    {feedListOpen[o.key] && (
+                      <span className="cc-feed-list" aria-label={`${o.label} feeds`}>
+                        {o.feeds.map((f) => (
+                          <span
+                            key={f.key}
+                            className={`cc-feed-item${f.enabled ? '' : ' off'}`}
+                            title={`${f.label}: ${f.technicalName || 'no technical name'} — ${
+                              !f.enabled
+                                ? `not served by ${o.label}`
+                                : f.path
+                                  ? `served at ${f.path}`
+                                  : 'no endpoint path set yet'
+                            }`}
+                          >
+                            <span className="cc-feed-short">{f.shortLabel}</span>
+                            <span className="cc-feed-tech">{f.technicalName || '—'}</span>
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </span>
+                  <span className="cc-source-links">
+                    {/* Credentials are offered only for the SELECTED source, so
+                        e.g. picking the mock leaves no credential fields around */}
+                    {o.needsCredentials && config.source === o.key && (
+                      <button
+                        type="button"
+                        className="cc-cred-link"
+                        onClick={(e) => {
+                          e.preventDefault(); // don't flip the radio
+                          toggleCreds(o.key);
+                        }}
+                      >
+                        {credOpen === o.key
+                          ? 'hide credentials'
+                          : o.connection?.configured
+                            ? 'edit credentials'
+                            : 'add credentials'}
+                      </button>
+                    )}
+                    {/* Feeds can be configured on any source, selected or not */}
                     <button
                       type="button"
                       className="cc-cred-link"
                       onClick={(e) => {
                         e.preventDefault(); // don't flip the radio
-                        toggleCreds(o.key);
+                        toggleFeeds(o.key);
                       }}
                     >
-                      {credOpen === o.key
-                        ? 'hide credentials'
-                        : o.connection?.configured
-                          ? 'edit credentials'
-                          : 'add credentials'}
+                      {feedsOpen === o.key ? 'hide feeds' : 'configure feeds'}
                     </button>
-                  )}
+                  </span>
                 </span>
               </label>
             ))}
@@ -883,12 +1052,118 @@ function SourceConfig() {
             </div>
           )}
 
+          {feedOpt && (
+            <div className="cc-cred-form cc-feed-form">
+              <div className="cc-cred-head">
+                <strong>{feedOpt.label} feeds</strong>
+                <span className="muted">
+                  the technical name and endpoint path of each feed on this source — click a
+                  cell to edit it, press Enter (or click away) to save, Esc to discard
+                </span>
+              </div>
+              {feedError && <div className="status-line err">{feedError}</div>}
+              <div className="cc-feed-table-wrap">
+                <table className="cc-feed-table">
+                  <thead>
+                    <tr>
+                      <th>Feed</th>
+                      <th>Technical name</th>
+                      <th>Endpoint path</th>
+                      <th>Served</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {feedOpt.feeds.map((f) => {
+                      const draft = feedDrafts[f.key] || {};
+                      const busy = feedBusy === f.key;
+                      return (
+                        <tr key={f.key} className={f.enabled ? undefined : 'off'}>
+                          <td>
+                            <span className="cc-feed-label">{f.label}</span>
+                            {f.shortLabel !== f.label && (
+                              <>
+                                {' '}
+                                <span className="cc-feed-state">{f.shortLabel}</span>
+                              </>
+                            )}
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              aria-label={`${f.label} technical name`}
+                              value={draft.technicalName ?? f.technicalName}
+                              onChange={(e) =>
+                                setFeedDraft(f.key, { technicalName: e.target.value })
+                              }
+                              onBlur={() => commitFeed(feedOpt.key, f)}
+                              onKeyDown={feedKeyDown(f.key)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="text"
+                              aria-label={`${f.label} endpoint path`}
+                              placeholder="/api/… relative to the base URL"
+                              value={draft.path ?? f.path}
+                              onChange={(e) => setFeedDraft(f.key, { path: e.target.value })}
+                              onBlur={() => commitFeed(feedOpt.key, f)}
+                              onKeyDown={feedKeyDown(f.key)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="checkbox"
+                              aria-label={`${feedOpt.label} serves ${f.label}`}
+                              checked={f.enabled}
+                              disabled={busy}
+                              onChange={(e) =>
+                                saveFeed(feedOpt.key, f, { enabled: e.target.checked })
+                              }
+                            />
+                          </td>
+                          <td className="cc-feed-state">
+                            {busy ? (
+                              '⟳ saving…'
+                            ) : f.customized ? (
+                              <button
+                                type="button"
+                                className="cc-cred-link cc-feed-reset"
+                                title={`Back to ${f.default.technicalName || 'no name'} at ${
+                                  f.default.path || 'no path'
+                                }`}
+                                onClick={() => resetFeed(feedOpt.key, f)}
+                              >
+                                reset to default
+                              </button>
+                            ) : (
+                              'default'
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="cc-cred-checked">
+                Paths are relative to the {feedOpt.label} base URL
+                {feedBase ? ` (${feedBase})` : ' — none saved yet, so add credentials first'}.
+                A feed that is not served is skipped whenever {feedOpt.label} is the selected
+                source.
+              </p>
+            </div>
+          )}
+
           <p className="wf-note">
             The selected source decides which API the workflow&apos;s JSONs come from — Mock-Up
-            NatGasHub serves the mock API&apos;s JSON, the others theirs. NatGasHub and Cortex
-            need credentials: add them and the app checks the connection right away, marking
-            the source connected or failed. Retrieval currently runs against the Mock-Up
-            NatGasHub API; the other sources follow this setting once their APIs are wired up.
+            NatGasHub serves the mock API&apos;s JSON, the others theirs. Every source serves
+            the same four feeds — Firm, IT, Awards and IOC — under its own technical names and
+            endpoint paths, listed on each card and editable through its configure-feeds link.
+            NatGasHub and Cortex need credentials: add them and the app checks the connection
+            right away, marking the source connected or failed. Retrieval currently runs
+            against the Mock-Up NatGasHub API; the other sources follow this setting once
+            their APIs are wired up.
           </p>
         </>
       )}

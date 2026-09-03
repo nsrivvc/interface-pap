@@ -1881,6 +1881,156 @@ td.json-cell {
   color: #a52a21;
 }
 
+/* ---- Source feeds (technical names on each card + inline editor) ---- */
+.cc-feed-dd {
+  display: block;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.cc-feed-dd-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 0.73rem;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--navy);
+  text-align: left;
+  cursor: pointer;
+}
+.cc-feed-dd-toggle:hover {
+  color: var(--orange);
+}
+.cc-feed-dd-arrow {
+  flex-shrink: 0;
+  width: 10px;
+  font-size: 0.8rem;
+  color: var(--slate);
+}
+.cc-feed-dd-summary {
+  font-weight: 400;
+  color: var(--slate);
+}
+.cc-feed-dd-summary span + span::before {
+  content: ' · ';
+}
+.cc-feed-dd-summary .off {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.cc-feed-list {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+  padding-left: 16px;
+  font-size: 0.71rem;
+  font-weight: 400;
+}
+.cc-feed-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--slate);
+}
+.cc-feed-item.off {
+  opacity: 0.55;
+}
+.cc-feed-item.off .cc-feed-tech {
+  text-decoration: line-through;
+}
+.cc-feed-short {
+  flex-shrink: 0;
+  width: 46px;
+  font-weight: 700;
+  color: var(--navy);
+}
+.cc-feed-tech {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+}
+.cc-source-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+}
+.cc-feed-table-wrap {
+  overflow-x: auto;
+}
+.cc-feed-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.cc-feed-table th {
+  text-align: left;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+.cc-feed-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #eef1f6;
+  vertical-align: middle;
+}
+.cc-feed-table tr:last-child td {
+  border-bottom: none;
+}
+.cc-feed-table tr.off td {
+  color: var(--slate);
+}
+.cc-feed-table tr.off input[type='text'] {
+  text-decoration: line-through;
+  color: var(--slate);
+}
+.cc-feed-table input[type='text'] {
+  width: 100%;
+  min-width: 180px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  background: #fff;
+}
+.cc-feed-table input[type='text']:focus {
+  outline: 2px solid var(--orange);
+  border-color: transparent;
+}
+.cc-feed-table input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+.cc-feed-label {
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+}
+.cc-feed-state {
+  font-size: 0.7rem;
+  color: var(--slate);
+  white-space: nowrap;
+}
+.cc-feed-reset {
+  margin-top: 0;
+  font-size: 0.7rem;
+}
+
 /* ---- Configure Components grids (AG Grid over the reference tables) ---- */
 .cc-section {
   margin-top: 18px;

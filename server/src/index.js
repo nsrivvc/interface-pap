@@ -582,22 +582,47 @@ app.delete('/api/components/:key', requireAdmin, wrap(async (req, res) => {
 // Which upstream API the workflow's source JSONs come from. A single-row
 // setting (public.source_config) picked in Configure Components, plus one
 // credentials row per source (public.source_credentials) so someone can enter
-// their NatGasHub / Cortex access from the app and have it verified. For now
-// this is configuration only — retrieval still runs against the mock NGH API
-// until the other sources are wired to read this setting.
+// their NatGasHub / Cortex access from the app and have it verified.
+//
+// Every source serves the same four feeds (Firm, Interruptible, Awards, Index
+// of Customers — the provider's FEED_KEYS), but calls them by its own
+// technical names and serves them at its own paths. Each option below carries
+// the defaults for its feeds; a row in public.source_feeds overrides one feed
+// of one source (renamed, re-pathed or switched off) and is edited in place
+// from the Source card. Connection checks and the pipeline-options picker read
+// the selected source's feed wiring; the transformation workflows themselves
+// still run against the mock NGH API until the other sources are wired up.
 const SOURCE_OPTIONS = [
   {
     key: 'mockup-natgashub',
     label: 'Mock-Up NatGasHub',
     description: 'The mock NatGasHub API — same feed shapes, generated JSON',
     needsCredentials: false,
+    feeds: {
+      firm: { technicalName: 'Mock-NGH-gTran-Firms-API-Pipeline', path: '/api/firms' },
+      interruptible: {
+        technicalName: 'Mock-NGH-gTran-Interruptibles-API-Pipeline',
+        path: '/api/interruptibles',
+      },
+      awards: { technicalName: 'Mock-NGH-gExchange-Awards-API-Pipeline', path: '/api/awards' },
+      index: { technicalName: 'Mock-NGH-IndexOfCustomers-API-Pipeline', path: '/api/ioc' },
+    },
   },
   {
     key: 'natgashub',
     label: 'NatGasHub',
     description: 'Live NatGasHub API — the real gTran, gExchange and Index of Customers feeds',
     needsCredentials: true,
-    healthPath: '/api/firms', // same shape as the mock — a cheap authenticated GET
+    healthPath: '/api/firms', // fallback when no feed has a path — a cheap authenticated GET
+    feeds: {
+      firm: { technicalName: 'NGH-gTran-Firms-API-Pipeline', path: '/api/firms' },
+      interruptible: {
+        technicalName: 'NGH-gTran-Interruptibles-API-Pipeline',
+        path: '/api/interruptibles',
+      },
+      awards: { technicalName: 'NGH-gExchange-Awards-API-Pipeline', path: '/api/awards' },
+      index: { technicalName: 'NGH-IndexOfCustomers-API-Pipeline', path: '/api/ioc' },
+    },
   },
   {
     key: 'cortex',
@@ -605,6 +630,14 @@ const SOURCE_OPTIONS = [
     description: 'Cortex API — source the feed JSONs from Cortex',
     needsCredentials: true,
     healthPath: '',
+    // Cortex endpoints are not known yet — the names are placeholders and the
+    // paths are left blank to be filled in from the Source card.
+    feeds: {
+      firm: { technicalName: 'Cortex-Firm-Feed', path: '' },
+      interruptible: { technicalName: 'Cortex-Interruptible-Feed', path: '' },
+      awards: { technicalName: 'Cortex-Awards-Feed', path: '' },
+      index: { technicalName: 'Cortex-IndexOfCustomers-Feed', path: '' },
+    },
   },
 ];
 const SOURCE_KEYS = new Set(SOURCE_OPTIONS.map((o) => o.key));
@@ -614,6 +647,75 @@ const sourceOption = (key) => {
   if (!opt) throw new Error('Unknown source.');
   return opt;
 };
+
+// Where the Mock-Up NatGasHub API lives. The real sources carry their base
+// URL in their credentials row instead.
+const SOURCE_API_BASE = process.env.SOURCE_API_BASE || 'http://localhost:8000';
+
+// One source's feeds as the client sees them: the stored override where there
+// is one, the option's built-in default otherwise. Labels come from the active
+// provider so they match the rest of the UI.
+function sourceFeeds(opt, rows) {
+  const stored = Object.fromEntries(
+    rows.filter((r) => r.source === opt.key).map((r) => [r.feed, r])
+  );
+  return FEED_KEYS.map((key) => {
+    const def = opt.feeds?.[key] || { technicalName: '', path: '' };
+    const row = stored[key];
+    return {
+      key,
+      label: provider.feeds[key].label,
+      shortLabel: provider.feeds[key].shortLabel,
+      technicalName: row ? row.technical_name : def.technicalName,
+      path: row ? row.path : def.path,
+      enabled: row ? row.enabled : true,
+      customized: Boolean(row),
+      default: def,
+    };
+  });
+}
+
+// The stored feed overrides — for one source, or every source — or nothing
+// when there is no database (the defaults then stand).
+async function loadFeedRows(sourceKey) {
+  if (!(await ensureSourceConfig())) return [];
+  return sourceKey
+    ? sql`SELECT * FROM source_feeds WHERE source = ${sourceKey}`
+    : sql`SELECT * FROM source_feeds`;
+}
+
+// The path a connection check hits: the first switched-on feed with a path
+// (Firm, normally), so the check exercises a real feed endpoint. Falls back to
+// the option's own healthPath, then to the bare base URL.
+const healthPath = (opt, feeds) =>
+  feeds.find((f) => f.enabled && f.path)?.path ?? opt.healthPath ?? '';
+
+// The SELECTED source with everything needed to call it: its option, its
+// credentials row (real sources) and its feed wiring.
+async function activeSource() {
+  let sourceKey = DEFAULT_SOURCE;
+  let credRow = null;
+  let feedRows = [];
+  if (await ensureSourceConfig()) {
+    const [row] = await sql`SELECT source FROM source_config WHERE id = 1`;
+    if (row && SOURCE_KEYS.has(row.source)) sourceKey = row.source;
+    [credRow] = await sql`SELECT * FROM source_credentials WHERE source = ${sourceKey}`;
+    feedRows = await sql`SELECT * FROM source_feeds WHERE source = ${sourceKey}`;
+  }
+  const opt = sourceOption(sourceKey);
+  return { opt, credRow, feeds: sourceFeeds(opt, feedRows) };
+}
+
+// Where the active source serves one feed — its configured path on the
+// source's base URL (SOURCE_API_BASE for the mock, the credentials' base URL
+// otherwise) plus the auth headers. null when the feed is switched off there,
+// has no path yet, or the source has no base URL saved.
+function feedEndpoint({ opt, credRow, feeds }, feedKey) {
+  const feed = feeds.find((f) => f.key === feedKey);
+  const base = opt.needsCredentials ? credRow?.base_url : SOURCE_API_BASE;
+  if (!feed?.enabled || !feed.path || !base) return null;
+  return { url: base.replace(/\/+$/, '') + feed.path, headers: authHeaders(credRow || {}) };
+}
 
 let sourceConfigEnsured = false;
 async function ensureSourceConfig() {
@@ -643,6 +745,17 @@ async function ensureSourceConfig() {
         updated_at    timestamptz NOT NULL DEFAULT now()
       )`
     );
+    await sql.query(
+      `CREATE TABLE IF NOT EXISTS public.source_feeds (
+        source         text NOT NULL,
+        feed           text NOT NULL,
+        technical_name text NOT NULL,
+        path           text NOT NULL DEFAULT '',
+        enabled        boolean NOT NULL DEFAULT true,
+        updated_at     timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (source, feed)
+      )`
+    );
     sourceConfigEnsured = true;
     return true;
   } catch {
@@ -661,10 +774,10 @@ const connectionSummary = (row) => ({
   hasKey: Boolean(row?.api_key),
 });
 
-// Ping the source API with the stored credentials. Basic auth when a username
-// is given, otherwise the key rides as both Bearer and x-api-key — covering
-// the common schemes without knowing each API's exact one up front.
-async function verifySourceApi(opt, { base_url, username, api_key }) {
+// Request headers for a source's stored credentials. Basic auth when a
+// username is given, otherwise the key rides as both Bearer and x-api-key —
+// covering the common schemes without knowing each API's exact one up front.
+function authHeaders({ username, api_key }) {
   const headers = { Accept: 'application/json' };
   if (username) {
     headers.Authorization = `Basic ${Buffer.from(`${username}:${api_key || ''}`).toString('base64')}`;
@@ -672,7 +785,13 @@ async function verifySourceApi(opt, { base_url, username, api_key }) {
     headers.Authorization = `Bearer ${api_key}`;
     headers['x-api-key'] = api_key;
   }
-  const url = base_url.replace(/\/+$/, '') + (opt.healthPath || '');
+  return headers;
+}
+
+// Ping one path of the source API with the stored credentials.
+async function verifySourceApi(path, { base_url, username, api_key }) {
+  const headers = authHeaders({ username, api_key });
+  const url = base_url.replace(/\/+$/, '') + (path || '');
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 6000);
   try {
@@ -690,8 +809,10 @@ async function verifySourceApi(opt, { base_url, username, api_key }) {
 }
 
 // Run a verification for one source's stored row and persist the outcome.
+// The check hits the source's first switched-on feed path.
 async function verifyAndStore(opt, row) {
-  const result = await verifySourceApi(opt, row);
+  const feeds = sourceFeeds(opt, await loadFeedRows(opt.key));
+  const result = await verifySourceApi(healthPath(opt, feeds), row);
   const [updated] = await sql`
     UPDATE source_credentials
     SET status = ${result.ok ? 'connected' : 'failed'},
@@ -705,15 +826,23 @@ async function verifyAndStore(opt, row) {
 app.get('/api/source-config', requireAdmin, wrap(async (req, res) => {
   let source = DEFAULT_SOURCE;
   let credRows = [];
+  let feedRows = [];
   if (await ensureSourceConfig()) {
     const [row] = await sql`SELECT source FROM source_config WHERE id = 1`;
     if (row && SOURCE_KEYS.has(row.source)) source = row.source;
     credRows = await sql`SELECT * FROM source_credentials`;
+    feedRows = await sql`SELECT * FROM source_feeds`;
   }
   const byKey = Object.fromEntries(credRows.map((r) => [r.source, r]));
-  const options = SOURCE_OPTIONS.map(({ healthPath, ...opt }) => ({
+  // The option minus its server-only bits (health path, raw feed defaults),
+  // plus its connection and its four feeds as currently configured.
+  const options = SOURCE_OPTIONS.map(({ healthPath: _health, feeds: _defaults, ...opt }) => ({
     ...opt,
     connection: opt.needsCredentials ? connectionSummary(byKey[opt.key]) : null,
+    // The mock's base URL is server config, not a credential — the real
+    // sources report theirs under connection.baseUrl.
+    baseUrl: opt.needsCredentials ? null : SOURCE_API_BASE,
+    feeds: sourceFeeds(sourceOption(opt.key), feedRows),
   }));
   res.json({ source, options });
 }));
@@ -767,7 +896,8 @@ app.put('/api/source-config/:key/credentials', requireAdmin, wrap(async (req, re
 app.post('/api/source-config/:key/verify', requireAdmin, wrap(async (req, res) => {
   const opt = sourceOption(req.params.key);
   if (!opt.needsCredentials) {
-    const result = await verifySourceApi({ healthPath: '/api/firms' }, { base_url: SOURCE_API_BASE });
+    const feeds = sourceFeeds(opt, await loadFeedRows(opt.key));
+    const result = await verifySourceApi(healthPath(opt, feeds), { base_url: SOURCE_API_BASE });
     const detail = !result.ok && result.detail.includes('unreachable')
       ? `mock API unreachable at ${SOURCE_API_BASE} — is it running?`
       : result.detail;
@@ -799,6 +929,53 @@ app.delete('/api/source-config/:key/credentials', requireAdmin, wrap(async (req,
     await sql`DELETE FROM source_credentials WHERE source = ${opt.key}`;
   }
   res.json({ ok: true });
+}));
+
+// One feed of one source, as the client shows it after a change.
+async function feedView(opt, feedKey) {
+  return sourceFeeds(opt, await loadFeedRows(opt.key)).find((f) => f.key === feedKey);
+}
+
+// Configure one feed of one source: its technical name, the path it is served
+// at (relative to the source's base URL) and whether the source serves it at
+// all. Saved as an override row; identical for every source.
+app.put('/api/source-config/:key/feeds/:feed', requireAdmin, wrap(async (req, res) => {
+  const opt = sourceOption(req.params.key);
+  const feedKey = String(req.params.feed || '');
+  if (!FEED_KEYS.includes(feedKey)) {
+    throw new Error(`Unknown feed "${feedKey}". This API has: ${FEED_KEYS.join(', ')}.`);
+  }
+  if (!(await ensureSourceConfig())) {
+    throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
+  }
+  const current = await feedView(opt, feedKey);
+  const technicalName = String(req.body?.technicalName ?? current.technicalName).trim();
+  const path = String(req.body?.path ?? current.path).trim();
+  const enabled = req.body?.enabled === undefined ? current.enabled : Boolean(req.body.enabled);
+  if (!technicalName) throw new Error('Enter the feed\u2019s technical name.');
+  if (path && !path.startsWith('/')) {
+    throw new Error('The endpoint path is relative to the base URL — start it with a slash.');
+  }
+  await sql`
+    INSERT INTO source_feeds (source, feed, technical_name, path, enabled)
+    VALUES (${opt.key}, ${feedKey}, ${technicalName}, ${path}, ${enabled})
+    ON CONFLICT (source, feed) DO UPDATE
+    SET technical_name = EXCLUDED.technical_name,
+        path = EXCLUDED.path,
+        enabled = EXCLUDED.enabled,
+        updated_at = now()`;
+  res.json({ feed: await feedView(opt, feedKey) });
+}));
+
+// Drop a feed's override so the source's built-in default applies again.
+app.delete('/api/source-config/:key/feeds/:feed', requireAdmin, wrap(async (req, res) => {
+  const opt = sourceOption(req.params.key);
+  const feedKey = String(req.params.feed || '');
+  if (!FEED_KEYS.includes(feedKey)) throw new Error(`Unknown feed "${feedKey}".`);
+  if (await ensureSourceConfig()) {
+    await sql`DELETE FROM source_feeds WHERE source = ${opt.key} AND feed = ${feedKey}`;
+  }
+  res.json({ feed: await feedView(opt, feedKey) });
 }));
 
 // ---------- Scenarios ----------
@@ -1038,13 +1215,14 @@ app.delete('/api/scenarios/:id', requireAdmin, wrap(async (req, res) => {
 // Distinct pipeline (TSP) names per source, for the workflow "Configure
 // Components" picker. Prefers pinging the live source API; falls back to the
 // warehouse's bronze rows when the mock isn't running.
-// Per-feed source path plus which columns carry the pipeline (TSP) identity —
-// gTran feeds use tspname/tspduns, awards spells it out in full.
+// Which columns carry the pipeline (TSP) identity in each feed — gTran feeds
+// use tspname/tspduns, awards spells it out in full. Where a feed is fetched
+// from comes from the selected source's feed wiring (see Configure Source).
 const SOURCE_PIPELINES = {
-  firm: { path: '/api/firms', name: 'tspname', duns: 'tspduns' },
-  interruptible: { path: '/api/interruptibles', name: 'tspname', duns: 'tspduns' },
-  awards: { path: '/api/awards', name: 'transportationserviceprovidername', duns: null },
-  index: { path: '/api/ioc', name: 'pipe', duns: null }, // IOC calls the pipeline 'Pipe'
+  firm: { name: 'tspname', duns: 'tspduns' },
+  interruptible: { name: 'tspname', duns: 'tspduns' },
+  awards: { name: 'transportationserviceprovidername', duns: null },
+  index: { name: 'pipe', duns: null }, // IOC calls the pipeline 'Pipe'
 };
 
 // Case-insensitive field lookup — the live API uses TitleCase (TspName), the
@@ -1057,17 +1235,19 @@ const pickField = (record, ...names) => {
   }
   return null;
 };
-const SOURCE_API_BASE = process.env.SOURCE_API_BASE || 'http://localhost:8000';
-
 app.get('/api/pipeline-options', requireAdmin, wrap(async (req, res) => {
   const wanted = String(req.query.sources || '').split(',').filter((k) => SOURCE_PIPELINES[k]);
   const options = {};
+  const active = await activeSource();
   await Promise.all(wanted.map(async (key) => {
-    // 1. the live source API for this feed
+    // 1. the live source API for this feed — wherever the selected source's
+    //    feed wiring says it is served (skipped when the feed is off there)
+    const endpoint = feedEndpoint(active, key);
     try {
+      if (!endpoint) throw new Error('feed not served by the selected source');
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), 2500);
-      const resp = await fetch(`${SOURCE_API_BASE}${SOURCE_PIPELINES[key].path}`, { signal: ctl.signal });
+      const resp = await fetch(endpoint.url, { headers: endpoint.headers, signal: ctl.signal });
       clearTimeout(timer);
       if (resp.ok) {
         const body = await resp.json();

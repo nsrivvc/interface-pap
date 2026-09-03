@@ -55,7 +55,7 @@ local disk).
 
 | File | What it does |
 | --- | --- |
-| `schema.sql` | Every Neon table in one place: users, stage tables, workflows/runs, the reference tables (shipping, pipeline_attributes, rec_del_pairings, location_purpose_code), source_config + source_credentials, and scenarios. All idempotent. |
+| `schema.sql` | Every Neon table in one place: users, stage tables, workflows/runs, the reference tables (shipping, pipeline_attributes, rec_del_pairings, location_purpose_code), source_config + source_credentials + source_feeds, and scenarios. All idempotent. |
 | `scripts/init-db.js` | Applies `schema.sql` to Neon and seeds the admin account. |
 | `scripts/seed-final-core.js` | Drops + recreates `final_core_master_capacity` with sample rows. |
 | `scripts/test-powerbi-auth.js` | Checks the Power BI service-principal login chain works, without printing secrets. |
@@ -98,7 +98,7 @@ local disk).
 | File | What it does |
 | --- | --- |
 | `Header.jsx` | Top nav bar: the four tabs + signed-in user + logout. |
-| `ComponentsConfig.jsx` | The whole Reference Data UI. `Section` = a collapsible block (state remembered per browser). `SourceConfig` = the source cards, credentials form, connected/failed badges, test connection. `ComponentTable` = one editable AG Grid over a reference table (add row, edit cells in place, delete). |
+| `ComponentsConfig.jsx` | The whole Reference Data UI. `Section` = a collapsible block (state remembered per browser). `SourceConfig` = the source cards, credentials form, connected/failed badges, test connection, and each source's feed table (technical name, endpoint path and on/off of its Firm, IT, Awards and IOC feeds). `ComponentTable` = one editable AG Grid over a reference table (add row, edit cells in place, delete). |
 | `WorkflowPanel.jsx` | The whole dashboard UI. Top panel: create/list/delete **scenarios** (stacked dropdowns per reference point, ＋ adds another value). Bottom panel: create/edit/run **workflows** — name, one attached scenario (styled dropdown), sources, daily trigger time — plus live GitHub Actions run status while a pipeline executes. |
 
 ### Power BI helpers (`client/src/`)
@@ -117,6 +117,9 @@ local disk).
   automatically. The Source card is special: pick which API feeds the JSONs
   (Mock-Up NatGasHub / NatGasHub / Cortex), enter credentials for the real
   ones, and the server verifies and badges them "connected" or "failed".
+  Every source serves the same four feeds — Firm, IT, Awards, IOC — under its
+  own technical names and endpoint paths; each card lists them and its
+  "configure feeds" link edits them in place (stored in `source_feeds`).
 - **Scenario** — a saved, named bundle of reference-data choices (one source,
   one or more pipelines/shippers/locations/pairings). Created on the
   dashboard, stored in Neon (`scenarios.config` as JSON).
@@ -135,7 +138,7 @@ local disk).
 | `JWT_SECRET` | Signing login tokens. |
 | `GITHUB_TOKEN`, `PIPELINE_GITHUB_REPO`, `PIPELINE_GITHUB_REF` | Triggering and watching the real pipeline runs. |
 | `POWERBI_TENANT_ID` / `CLIENT_ID` / `CLIENT_SECRET` / `WORKSPACE_ID` | The Power BI panel. |
-| `SOURCE_API_BASE` | Where the Mock-Up NatGasHub API lives (default `http://localhost:8000`) — used by the mock's Test Connection and the pipeline-options picker. |
+| `SOURCE_API_BASE` | Where the Mock-Up NatGasHub API lives (default `http://localhost:8000`) — the base its feed paths hang off, used by the mock's Test Connection and the pipeline-options picker. The real sources take their base URL from their saved credentials instead. |
 | `PIPELINE_PROVIDER` | Which provider file is active (default `natgashub`). |
 
 On Vercel, set the same names in the project's Environment Variables.
