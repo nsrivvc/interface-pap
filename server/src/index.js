@@ -7,9 +7,9 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import bcrypt from 'bcryptjs';
 import { sql } from './db.js';
-import { signToken, requireAuth } from './auth.js';
+import { requireAuth } from './auth.js';
+import { registerAccountRoutes, requireAdmin } from './accounts.js';
 import { retrieveSource, runStage, runFullPipeline } from './pipeline.js';
 import { reloadSchedules } from './scheduler.js';
 import { registerDownloadRoute } from './downloads.js';
@@ -25,39 +25,10 @@ app.use(express.json({ limit: '8mb' })); // gold-view rows ride in the body
 const wrap = (fn) => (req, res) =>
   fn(req, res).catch((err) => res.status(400).json({ error: err.message }));
 
-// ---------- Auth ----------
-app.post('/api/auth/register', wrap(async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password) throw new Error('Name, email and password are required.');
-  if (password.length < 8) throw new Error('Password must be at least 8 characters.');
-  const existing = await sql`SELECT id FROM users WHERE email = ${email.toLowerCase()}`;
-  if (existing.length) throw new Error('An account with that email already exists.');
-  const hash = await bcrypt.hash(password, 10);
-  const [user] = await sql`
-    INSERT INTO users (name, email, password_hash)
-    VALUES (${name}, ${email.toLowerCase()}, ${hash})
-    RETURNING id, name, email`;
-  res.json({ token: signToken(user), user });
-}));
-
-// Local admin account — works with or without a database connection
-const LOCAL_ADMIN = { id: 0, name: 'Admin', email: 'admin' };
-
-app.post('/api/auth/login', wrap(async (req, res) => {
-  const { email, password } = req.body;
-  if ((email || '').toLowerCase() === LOCAL_ADMIN.email && password === '12345') {
-    return res.json({ token: signToken(LOCAL_ADMIN), user: LOCAL_ADMIN });
-  }
-  const [user] = await sql`
-    SELECT id, name, email, password_hash FROM users WHERE email = ${(email || '').toLowerCase()}`;
-  if (!user || !(await bcrypt.compare(password || '', user.password_hash))) {
-    return res.status(401).json({ error: 'Invalid email or password.' });
-  }
-  const safe = { id: user.id, name: user.name, email: user.email };
-  res.json({ token: signToken(safe), user: safe });
-}));
-
-app.get('/api/auth/me', requireAuth, (req, res) => res.json({ user: req.user }));
+// ---------- Auth & accounts ----------
+// Sign-up, sign-in and account management all live in accounts.js, which also
+// defines the two roles and the requireAdmin gate the routes below use.
+registerAccountRoutes(app, wrap);
 
 // ---------- Tables ----------
 // Every table the viewer exposes, derived from the ACTIVE source API in
@@ -475,7 +446,7 @@ const tidyIds = async (spec) => {
   }
 };
 
-app.get('/api/components/:key', requireAuth, wrap(async (req, res) => {
+app.get('/api/components/:key', requireAdmin, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
   let columns = spec.columns;
   let rows = [];
@@ -490,7 +461,7 @@ app.get('/api/components/:key', requireAuth, wrap(async (req, res) => {
   res.json({ columns, rows });
 }));
 
-app.post('/api/components/:key', requireAuth, wrap(async (req, res) => {
+app.post('/api/components/:key', requireAdmin, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
   if (!(await ensureComponentTable(spec))) {
     throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
@@ -520,7 +491,7 @@ app.post('/api/components/:key', requireAuth, wrap(async (req, res) => {
 // rejects the upload instead of leaving it half applied.
 const MAX_IMPORT_ROWS = 1000;
 
-app.post('/api/components/:key/import', requireAuth, wrap(async (req, res) => {
+app.post('/api/components/:key/import', requireAdmin, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
   if (!(await ensureComponentTable(spec))) {
     throw new Error('Database not connected — set DATABASE_URL in server/.env first.');
@@ -569,7 +540,7 @@ app.post('/api/components/:key/import', requireAuth, wrap(async (req, res) => {
 
 // Inline cell edits from the grid — update one row (found by ctid) in place.
 // Note ctids change on UPDATE, so the client refetches after every save.
-app.put('/api/components/:key', requireAuth, wrap(async (req, res) => {
+app.put('/api/components/:key', requireAdmin, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
   const ctid = String(req.body?.ctid || '');
   if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
@@ -598,7 +569,7 @@ app.put('/api/components/:key', requireAuth, wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/components/:key', requireAuth, wrap(async (req, res) => {
+app.delete('/api/components/:key', requireAdmin, wrap(async (req, res) => {
   const spec = componentSpec(req.params.key);
   const ctid = String(req.body?.ctid || '');
   if (!/^\(\d+,\d+\)$/.test(ctid)) throw new Error('Bad row id.');
@@ -731,7 +702,7 @@ async function verifyAndStore(opt, row) {
   return updated;
 }
 
-app.get('/api/source-config', requireAuth, wrap(async (req, res) => {
+app.get('/api/source-config', requireAdmin, wrap(async (req, res) => {
   let source = DEFAULT_SOURCE;
   let credRows = [];
   if (await ensureSourceConfig()) {
@@ -747,7 +718,7 @@ app.get('/api/source-config', requireAuth, wrap(async (req, res) => {
   res.json({ source, options });
 }));
 
-app.put('/api/source-config', requireAuth, wrap(async (req, res) => {
+app.put('/api/source-config', requireAdmin, wrap(async (req, res) => {
   const source = String(req.body?.source || '');
   if (!SOURCE_KEYS.has(source)) throw new Error('Unknown source.');
   if (!(await ensureSourceConfig())) {
@@ -762,7 +733,7 @@ app.put('/api/source-config', requireAuth, wrap(async (req, res) => {
 // Save (or update) one source's credentials, then verify them immediately.
 // A blank api key on update keeps the stored one, so editing the base URL
 // doesn't force re-entering the secret.
-app.put('/api/source-config/:key/credentials', requireAuth, wrap(async (req, res) => {
+app.put('/api/source-config/:key/credentials', requireAdmin, wrap(async (req, res) => {
   const opt = sourceOption(req.params.key);
   if (!opt.needsCredentials) throw new Error(`${opt.label} does not take credentials.`);
   if (!(await ensureSourceConfig())) {
@@ -793,7 +764,7 @@ app.put('/api/source-config/:key/credentials', requireAuth, wrap(async (req, res
 
 // Re-run the connection check — stored credentials for the real sources; the
 // mock is pinged directly at SOURCE_API_BASE (nothing stored or needed).
-app.post('/api/source-config/:key/verify', requireAuth, wrap(async (req, res) => {
+app.post('/api/source-config/:key/verify', requireAdmin, wrap(async (req, res) => {
   const opt = sourceOption(req.params.key);
   if (!opt.needsCredentials) {
     const result = await verifySourceApi({ healthPath: '/api/firms' }, { base_url: SOURCE_API_BASE });
@@ -822,7 +793,7 @@ app.post('/api/source-config/:key/verify', requireAuth, wrap(async (req, res) =>
 }));
 
 // Forget a source's credentials entirely.
-app.delete('/api/source-config/:key/credentials', requireAuth, wrap(async (req, res) => {
+app.delete('/api/source-config/:key/credentials', requireAdmin, wrap(async (req, res) => {
   const opt = sourceOption(req.params.key);
   if (await ensureSourceConfig()) {
     await sql`DELETE FROM source_credentials WHERE source = ${opt.key}`;
@@ -858,7 +829,7 @@ async function ensureScenarios() {
   }
 }
 
-app.get('/api/scenarios', requireAuth, wrap(async (req, res) => {
+app.get('/api/scenarios', requireAdmin, wrap(async (req, res) => {
   let scenarios = [];
   if (await ensureScenarios()) {
     scenarios = await sql`SELECT * FROM scenarios ORDER BY id`;
@@ -951,7 +922,7 @@ async function pipelineShipperMap() {
   return map;
 }
 
-app.get('/api/scenario-options', requireAuth, wrap(async (req, res) => {
+app.get('/api/scenario-options', requireAdmin, wrap(async (req, res) => {
   const grab = async (key, query, toLabel) => {
     try {
       if (!(await ensureComponentTable(COMPONENT_TABLES[key]))) return [];
@@ -1012,7 +983,7 @@ function normalizeScenarioConfig(raw) {
   return Object.keys(config).length ? config : null;
 }
 
-app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
+app.post('/api/scenarios', requireAdmin, wrap(async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const description = String(req.body?.description || '').trim();
   if (!name) throw new Error('Scenario name is required.');
@@ -1031,7 +1002,7 @@ app.post('/api/scenarios', requireAuth, wrap(async (req, res) => {
 // reference a scenario by id, so editing must not orphan them the way
 // delete-then-recreate would (a new row gets a new id, and the workflow's
 // dispatch then fails with "the attached scenario no longer exists").
-app.put('/api/scenarios/:id', requireAuth, wrap(async (req, res) => {
+app.put('/api/scenarios/:id', requireAdmin, wrap(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new Error('Bad scenario id.');
   const name = String(req.body?.name || '').trim();
@@ -1054,7 +1025,7 @@ app.put('/api/scenarios/:id', requireAuth, wrap(async (req, res) => {
   res.json({ scenario });
 }));
 
-app.delete('/api/scenarios/:id', requireAuth, wrap(async (req, res) => {
+app.delete('/api/scenarios/:id', requireAdmin, wrap(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new Error('Bad scenario id.');
   if (await ensureScenarios()) {
@@ -1088,7 +1059,7 @@ const pickField = (record, ...names) => {
 };
 const SOURCE_API_BASE = process.env.SOURCE_API_BASE || 'http://localhost:8000';
 
-app.get('/api/pipeline-options', requireAuth, wrap(async (req, res) => {
+app.get('/api/pipeline-options', requireAdmin, wrap(async (req, res) => {
   const wanted = String(req.query.sources || '').split(',').filter((k) => SOURCE_PIPELINES[k]);
   const options = {};
   await Promise.all(wanted.map(async (key) => {
@@ -1146,7 +1117,7 @@ app.get('/api/pipeline-options', requireAuth, wrap(async (req, res) => {
 // AAD token for the embedded quick-create canvas. Handing the service
 // principal's token to the browser is acceptable for this internal tool; the
 // principal only has rights on the PAP Analytics workspace.
-app.get('/api/powerbi/token', requireAuth, wrap(async (req, res) => {
+app.get('/api/powerbi/token', requireAdmin, wrap(async (req, res) => {
   if (!powerbiConfigured) {
     return res.status(503).json({
       error: 'Power BI is not configured on the server — set the POWERBI_* values in server/.env.',
@@ -1159,7 +1130,7 @@ app.get('/api/powerbi/token', requireAuth, wrap(async (req, res) => {
 // Push the current gold view into a workspace dataset and hand back an embed
 // token for a report-creation canvas over it. Service-principal-safe, unlike
 // quickCreate (which only works with user AAD tokens).
-app.post('/api/powerbi/gold-report', requireAuth, wrap(async (req, res) => {
+app.post('/api/powerbi/gold-report', requireAdmin, wrap(async (req, res) => {
   if (!powerbiConfigured) {
     return res.status(503).json({
       error: 'Power BI is not configured on the server — set the POWERBI_* values in server/.env.',
@@ -1173,11 +1144,11 @@ app.post('/api/powerbi/gold-report', requireAuth, wrap(async (req, res) => {
 }));
 
 // ---------- Pipeline ----------
-app.post('/api/pipeline/retrieve-source', requireAuth, wrap(async (req, res) => {
+app.post('/api/pipeline/retrieve-source', requireAdmin, wrap(async (req, res) => {
   res.json(await retrieveSource(req.body?.source, req.body?.batchId));
 }));
 
-app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
+app.post('/api/pipeline/stage/:n', requireAdmin, wrap(async (req, res) => {
   const n = Number(req.params.n);
   res.json(await runStage(n, req.body?.batchId));
 }));
@@ -1188,7 +1159,7 @@ app.post('/api/pipeline/stage/:n', requireAuth, wrap(async (req, res) => {
 // scope (bronze.shipper_mapping), so the dispatched stage-3 runs read it —
 // no scenario clears the scope, keeping every run reproducible from its
 // scenario alone.
-app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => {
+app.post('/api/pipeline/trigger-stage12', requireAdmin, wrap(async (req, res) => {
   const scope = await applyScenarioScope(req.body?.scenarioId);
   // The scenario's Pipeline picks become the run's ONBOARDING REGISTER: a
   // contract whose TSP is not in it is held back at deduplication(p1) and
@@ -1198,7 +1169,7 @@ app.post('/api/pipeline/trigger-stage12', requireAuth, wrap(async (req, res) => 
 }));
 
 // Dispatch one source's ingest-only (stage 1-2) workflow — Manual Workflow panel
-app.post('/api/pipeline/trigger-ingest', requireAuth, wrap(async (req, res) => {
+app.post('/api/pipeline/trigger-ingest', requireAdmin, wrap(async (req, res) => {
   res.json(await triggerIngest(req.body?.source));
 }));
 
@@ -1210,19 +1181,19 @@ app.post('/api/pipeline/trigger-ingest', requireAuth, wrap(async (req, res) => {
 // rows each moved. That is the part a bare "completed" hides: rerunning a
 // workflow rebuilds every downstream table whether or not anything new came
 // in, and only the amendments ledger carries state between runs.
-app.get('/api/pipeline/run-status', requireAuth, wrap(async (req, res) => {
+app.get('/api/pipeline/run-status', requireAdmin, wrap(async (req, res) => {
   const files = String(req.query.files || '').split(',').filter(Boolean);
   const withWrites = req.query.writes === '1';
   res.json(await pipelineRunStatus(files, req.query.since, { withWrites }));
 }));
 
 // Cancel the in-flight GitHub Actions runs of a dispatch ({ files, since })
-app.post('/api/pipeline/cancel-run', requireAuth, wrap(async (req, res) => {
+app.post('/api/pipeline/cancel-run', requireAdmin, wrap(async (req, res) => {
   res.json(await cancelPipelineRuns(req.body?.files, req.body?.since));
 }));
 
 // ---------- Workflows ----------
-app.get('/api/workflows', requireAuth, wrap(async (req, res) => {
+app.get('/api/workflows', requireAdmin, wrap(async (req, res) => {
   try {
     const workflows = await sql`SELECT * FROM workflows ORDER BY id`;
     const runs = await sql`
@@ -1244,11 +1215,11 @@ app.get('/api/workflows', requireAuth, wrap(async (req, res) => {
   }
 }));
 
-app.post('/api/workflows/:id/run', requireAuth, wrap(async (req, res) => {
+app.post('/api/workflows/:id/run', requireAdmin, wrap(async (req, res) => {
   res.json(await runFullPipeline(Number(req.params.id)));
 }));
 
-app.put('/api/workflows/:id/schedule', requireAuth, wrap(async (req, res) => {
+app.put('/api/workflows/:id/schedule', requireAdmin, wrap(async (req, res) => {
   const { scheduleMinutes, enabled } = req.body;
   const minutes = scheduleMinutes === null || scheduleMinutes === '' ? null : Number(scheduleMinutes);
   if (minutes !== null && (!Number.isFinite(minutes) || minutes < 1)) {

@@ -2357,3 +2357,122 @@ td.json-cell {
   color: var(--slate);
   font-size: 0.72rem;
 }
+
+/* ---- Accounts (roles, the account list and the add-account form) ----
+   The role badge also rides in the header, next to who is signed in. */
+.role-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.role-admin {
+  background: rgba(192, 90, 30, 0.12);
+  color: var(--orange);
+  border: 1px solid rgba(192, 90, 30, 0.3);
+}
+.role-viewer {
+  background: rgba(31, 42, 68, 0.07);
+  color: var(--slate);
+  border: 1px solid var(--border);
+}
+.acct-matrix,
+.acct-table {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  overflow-x: auto;
+}
+.acct-matrix table,
+.acct-table table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+.acct-matrix th,
+.acct-matrix td,
+.acct-table th,
+.acct-table td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.acct-matrix tr:last-child td,
+.acct-table tr:last-child td {
+  border-bottom: none;
+}
+.acct-matrix th,
+.acct-table th {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--slate);
+  background: #f7f8fb;
+}
+.acct-matrix-role,
+.acct-matrix-cell {
+  text-align: center;
+  width: 120px;
+}
+.acct-yes {
+  color: var(--success);
+  font-weight: 700;
+}
+.acct-no {
+  color: var(--slate);
+  opacity: 0.5;
+}
+.acct-tag {
+  margin-left: 8px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f0f2f7;
+  border: 1px solid var(--border);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--slate);
+}
+.acct-role-select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 0.82rem;
+  color: var(--navy);
+  cursor: pointer;
+}
+.acct-role-select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.acct-actions {
+  width: 50px;
+  text-align: right;
+}
+/* The add-account row: fields flow side by side, the button sits on the
+   baseline with them and wraps underneath on a narrow screen. */
+.acct-new {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.acct-new .field {
+  margin-bottom: 0;
+  flex: 1 1 200px;
+}
+.acct-new .acct-role-select {
+  width: 100%;
+  padding: 11px 14px;
+  font-size: 0.9rem;
+}

@@ -1,10 +1,14 @@
 -- interface-pap schema — everything lives in one Neon database
 
+-- role: 'admin' (everything) or 'viewer' (Table Viewer + downloads, read-only).
+-- Sign-ups default to viewer; admins promote from the Accounts tab. See
+-- server/src/accounts.js, which also applies this column to existing databases.
 CREATE TABLE IF NOT EXISTS users (
   id            SERIAL PRIMARY KEY,
   name          TEXT NOT NULL,
   email         TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'viewer',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

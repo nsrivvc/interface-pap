@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth-context';
+import { homePath } from '../accounts';
 
 export default function Login() {
   const { login } = useAuth();
@@ -17,8 +18,7 @@ export default function Login() {
     setError('');
     setBusy(true);
     try {
-      await login(email, password);
-      navigate('/');
+      navigate(homePath(await login(email, password)));
     } catch (err) {
       setError(err.message);
     } finally {
