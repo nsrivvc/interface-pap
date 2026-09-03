@@ -585,29 +585,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
   const isRunning =
     run !== null && !run.error && (!run.finished || (run.github && !run.githubDone));
 
-  // Manual workflow triggers
-  const [triggering, setTriggering] = useState(null); // source key while a trigger runs
-  const [triggerStatus, setTriggerStatus] = useState(null); // { ok, text }
-
-  const manualTrigger = async (src) => {
-    setTriggering(src.key);
-    setTriggerStatus(null);
-    try {
-      const result = await api('/api/pipeline/trigger-ingest', {
-        method: 'POST',
-        body: { source: src.key },
-      });
-      setTriggerStatus({
-        ok: true,
-        text: `Manual trigger — dispatched ${result.dispatched[0]} (stage 1-2 ingest) on GitHub. Bronze rows land when the run finishes.`,
-      });
-    } catch (err) {
-      setTriggerStatus({ ok: false, text: `Manual trigger — ${src.label} failed: ${err.message}` });
-    } finally {
-      setTriggering(null);
-    }
-  };
-
   const toggleSource = (key) => {
     setDraftSources((sources) =>
       sources.includes(key) ? sources.filter((s) => s !== key) : [...sources, key]
@@ -1725,53 +1702,6 @@ export default function WorkflowPanel({ onPipelineRan }) {
           </div>
         );
       })}
-    </div>
-
-    {/* ---- Manual workflow (trigger individual pipelines per stage) ---- */}
-    <div className="panel">
-      <div style={{ marginBottom: 16 }}>
-        <span className="eyebrow">Orchestration</span>
-        <h2 style={{ marginBottom: 0 }}>Manual Workflow</h2>
-      </div>
-      <p className="muted" style={{ color: 'var(--slate)', marginBottom: 16 }}>
-        Trigger an individual pipeline at any stage, outside of a configured workflow.
-      </p>
-      <div className="mt-grid">
-        <div className="mt-card">
-          <div className="mt-stage-head">Stage 1 — API to Raw</div>
-          {SOURCE_DEFS.map((src) => (
-            <button
-              key={src.key}
-              className="mt-item"
-              disabled={triggering !== null}
-              onClick={() => manualTrigger(src)}
-            >
-              {triggering === src.key ? (
-                <span className="spin">⟳</span>
-              ) : (
-                <span className="mt-item-icon">▶</span>
-              )}
-              <span>
-                {src.label}
-                <span className="wf-chip-desc" style={{ display: 'block' }}>{src.desc}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-        {STAGE_DEFS.map((stage) => (
-          <div key={stage.key} className="mt-card disabled">
-            <div className="mt-stage-head">
-              {stage.label} — {stage.desc}
-            </div>
-            <div className="mt-coming-soon">Pipeline options coming soon</div>
-          </div>
-        ))}
-      </div>
-      {triggerStatus && (
-        <div className={`status-line ${triggerStatus.ok ? 'ok' : 'err'}`}>
-          {triggerStatus.text}
-        </div>
-      )}
     </div>
     </>
   );

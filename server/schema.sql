@@ -216,6 +216,21 @@ CREATE TABLE IF NOT EXISTS public.source_credentials (
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
+-- Per-source feed wiring, managed from the Source card in Configure
+-- Components. Every source serves the same four feeds (firm | interruptible |
+-- awards | index) under its own technical name and endpoint path (relative to
+-- the source's base URL); a row here overrides the server's built-in default
+-- for that one feed of that one source, or switches it off there.
+CREATE TABLE IF NOT EXISTS public.source_feeds (
+  source         text NOT NULL,
+  feed           text NOT NULL,
+  technical_name text NOT NULL,
+  path           text NOT NULL DEFAULT '',
+  enabled        boolean NOT NULL DEFAULT true,
+  updated_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (source, feed)
+);
+
 -- Location purpose codes per pipeline, managed from Configure Components.
 -- DUNS stays text because it carries leading zeros ("054748041").
 CREATE TABLE IF NOT EXISTS public.location_purpose_code (
